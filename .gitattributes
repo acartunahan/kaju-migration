@@ -1,0 +1,21 @@
+# Satır sonları depoda LF; Windows'ta çalışırken git checkout'ta dönüştürür.
+* text=auto eol=lf
+
+# Windows'a özgü script'ler CRLF kalır
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Konteyner içinde çalışan dosyalar her koşulda LF
+*.sh text eol=lf
+depo-modernizasyon/yerel-db/init/* text eol=lf
+
+# İkili dosyalar
+*.jar binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+
+# GitHub dil istatistiği: dokümantasyon ve test verisi kod sayılmasın
+*.md linguist-documentation
+depo-modernizasyon/yerel-db/init/02_mock_veri.sql linguist-generated

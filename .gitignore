@@ -1,0 +1,53 @@
+# =====================================================================================
+# kaju-migration — git'e girmeyecekler
+# =====================================================================================
+
+# --- Hassas / kaynak belgeler -------------------------------------------------------
+# Legacy DDL'in iş yerinde çekilmiş fotoğrafları. DDL metni asama0_legacy_ddl.sql'de.
+*.jpeg
+*.jpg
+*.png
+*.heic
+WhatsApp*
+
+# --- Ortam değişkenleri ve gizli bilgiler -------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+*.pfx
+secrets/
+
+# --- Build çıktıları -----------------------------------------------------------------
+target/
+*.class
+*.log
+hs_err_pid*
+replay_pid*
+
+# --- Migration çalışma raporları (yerel çalıştırmanın çıktısı) -----------------------
+depo-modernizasyon/raporlar/
+depo-modernizasyon/**/raporlar/
+
+# --- IDE -----------------------------------------------------------------------------
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+.vscode/
+.classpath
+.project
+.settings/
+.factorypath
+# IntelliJ çalıştırma ayarları yerel şifreler içerir; nasıl kurulacağı README'de.
+.run/
+
+# --- İşletim sistemi -----------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
