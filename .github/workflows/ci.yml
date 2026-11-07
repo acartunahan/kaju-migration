@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: depo-modernizasyon
+
+jobs:
+  build:
+    name: Build ve testler (birim + Oracle uçtan uca)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Kaynak kodu al
+        uses: actions/checkout@v4
+
+      - name: JDK 25 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # Uçtan uca test Testcontainers ile gerçek bir Oracle Free 23 başlatır
+      # (runner'da Docker hazır). Birim testleri surefire, uçtan uca test failsafe ile çalışır.
+      - name: mvn verify
+        run: mvn -B -ntp clean verify
+
+      - name: Test raporları
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-raporlari
+          path: |
+            depo-modernizasyon/**/target/surefire-reports/
+            depo-modernizasyon/**/target/failsafe-reports/
+          retention-days: 7
