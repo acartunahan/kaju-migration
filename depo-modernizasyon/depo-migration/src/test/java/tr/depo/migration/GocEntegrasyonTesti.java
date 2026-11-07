@@ -42,6 +42,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tr.depo.domain.envanter.Envanter;
 import tr.depo.domain.envanter.EnvanterAparati;
+import tr.depo.domain.envanter.EnvanterFotografi;
 import tr.depo.migration.ayar.GocAyarlari;
 import tr.depo.migration.cekirdek.GocDeposu;
 import tr.depo.migration.cekirdek.TabloGocu;
@@ -66,6 +67,7 @@ import tr.depo.migration.test.OracleTestOrtami;
  *   <li>Okuyucu restart: ExecutionContext'ten kaldığı yerden devam</li>
  *   <li>Yetki kontrolü: şema sahibiyle açılan legacy bağlantısı reddedilir</li>
  *   <li>ENVANTER_APARATI: bir demirbaşa birden fazla aparat; demirbaşsız ve adedi 0 olan aparat reddedilir</li>
+ *   <li>ENVANTER_FOTOGRAFI: bir envantere birden fazla fotoğraf, tek kapak, tekil nesne anahtarı</li>
  * </ol>
  *
  * Test verisi: src/test/resources/legacy/legacy_veri.sql (44 satır: 1'i R_APARAT, bilinçli taşınmaz;
@@ -96,6 +98,7 @@ class GocEntegrasyonTesti {
         BEKLENEN_HEDEF_SAYILARI.put("ENVANTER_NOTU", 2);
         BEKLENEN_HEDEF_SAYILARI.put("ENVANTER_HAREKETI", 4); // 2 DEMIRBAS (R_HAREKET) + 2 SARF (R_SARFDEMIRBAS)
         BEKLENEN_HEDEF_SAYILARI.put("ENVANTER_APARATI", 0); // yeni yapı; legacy'den doldurulmaz
+        BEKLENEN_HEDEF_SAYILARI.put("ENVANTER_FOTOGRAFI", 0); // yeni yapı; legacy'den doldurulmaz
         BEKLENEN_HEDEF_SAYILARI.put("COKLU_ZIMMET", 1);
         BEKLENEN_HEDEF_SAYILARI.put("ARIZA", 1);
         BEKLENEN_HEDEF_SAYILARI.put("ARIZA_ISLEMI", 1);
@@ -201,13 +204,13 @@ class GocEntegrasyonTesti {
         assertThat(surumler).containsExactly("1", "1000", "1001");
         assertThat(say("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME IN ("
             + BEKLENEN_HEDEF_SAYILARI.keySet().stream().map(t -> "'" + t + "'").collect(Collectors.joining(","))
-            + ")")).isEqualTo(18);
+            + ")")).isEqualTo(19);
         assertThat(say("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME LIKE 'BATCH\\_%' ESCAPE '\\'"))
             .isGreaterThanOrEqualTo(6);
         // Şemayı yalnızca Flyway kurar: Hibernate'in HTE_ geçici tabloları oluşmamalı
         assertThat(say("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME LIKE 'HTE\\_%' ESCAPE '\\'")).isZero();
         assertThat(say("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME NOT LIKE 'BATCH\\_%' ESCAPE '\\' "
-            + "AND TABLE_NAME NOT LIKE 'MIG\\_%' ESCAPE '\\' AND TABLE_NAME <> 'flyway_schema_history'")).isEqualTo(18);
+            + "AND TABLE_NAME NOT LIKE 'MIG\\_%' ESCAPE '\\' AND TABLE_NAME <> 'flyway_schema_history'")).isEqualTo(19);
         assertThat(legacy.satirSayisi("R_DEMIRBAS")).isEqualTo(5);
     }
 
@@ -619,12 +622,66 @@ class GocEntegrasyonTesti {
     // ------------------------------------------------------------------------------ 11
 
     /**
+     * Envanter fotoğrafları: bir envantere birden fazla fotoğraf; en fazla bir kapak; aynı nesne
+     * anahtarı iki kez kaydedilemez; izinli olmayan tür ve envantersiz fotoğraf reddedilir.
+     */
+    @Test
+    @Order(11)
+    void envanterin_birden_fazla_fotografi_olabilir() {
+        String ozet = "b".repeat(64);
+        Long envanterId = new TransactionTemplate(islemYoneticisi).execute(durum -> {
+            Envanter envanter = em.createQuery(
+                    "SELECT d FROM Envanter d WHERE d.tur = tr.depo.domain.tanim.MalzemeTuru.DEMIRBAS ORDER BY d.id",
+                    Envanter.class)
+                .setMaxResults(1).getSingleResult();
+            EnvanterFotografi on = new EnvanterFotografi(envanter, "envanter/test/on.jpg", "on.jpg", "image/jpeg", 2048, ozet);
+            on.setKapak(true);
+            on.setOlcu(1920, 1080);
+            EnvanterFotografi arka = new EnvanterFotografi(envanter, "envanter/test/arka.png", "arka.png", "image/png", 4096, ozet);
+            arka.setSira(1);
+            em.persist(on);
+            em.persist(arka);
+            return envanter.getId();
+        });
+
+        assertThat(say("SELECT COUNT(*) FROM ENVANTER_FOTOGRAFI WHERE ENVANTER_ID = ?", envanterId)).isEqualTo(2);
+        assertThat(say("SELECT COUNT(*) FROM ENVANTER_FOTOGRAFI WHERE ENVANTER_ID = ? AND KAPAK = 1", envanterId)).isEqualTo(1);
+        List<String> sirali = new TransactionTemplate(islemYoneticisi).execute(durum -> em.createQuery(
+                "SELECT f.dosyaAdi FROM EnvanterFotografi f WHERE f.envanter.id = :id ORDER BY f.sira", String.class)
+            .setParameter("id", envanterId).getResultList());
+        assertThat(sirali).containsExactly("on.jpg", "arka.png");
+
+        String ekle = "INSERT INTO ENVANTER_FOTOGRAFI (ID, VERSIYON, OLUSTURMA_ZAMANI, OLUSTURAN, ENVANTER_ID, "
+            + "NESNE_ANAHTARI, DOSYA_ADI, ICERIK_TURU, BOYUT, SHA256, KAPAK) "
+            + "VALUES (ENVANTER_FOTOGRAFI_SEQ.NEXTVAL, 0, SYSTIMESTAMP, 'TEST', ?, ?, 'x', ?, 1, ?, ?)";
+        // İkinci kapak
+        assertThatThrownBy(() -> hedef().update(ekle, envanterId, "envanter/test/k2.jpg", "image/jpeg", ozet, 1))
+            .isInstanceOf(DataIntegrityViolationException.class).hasMessageContaining("UX_ENVANTER_FOTOGRAFI_KAPAK");
+        // Aynı nesne anahtarı
+        assertThatThrownBy(() -> hedef().update(ekle, envanterId, "envanter/test/on.jpg", "image/jpeg", ozet, 0))
+            .isInstanceOf(DataIntegrityViolationException.class).hasMessageContaining("UK_ENVANTER_FOTOGRAFI_NESNE");
+        // İzinli olmayan tür, bozuk özet, envantersiz
+        assertThatThrownBy(() -> hedef().update(ekle, envanterId, "envanter/test/a.pdf", "application/pdf", ozet, 0))
+            .isInstanceOf(DataIntegrityViolationException.class).hasMessageContaining("CK_ENVANTER_FOTOGRAFI_TUR");
+        assertThatThrownBy(() -> hedef().update(ekle, envanterId, "envanter/test/b.jpg", "image/jpeg", "xyz", 0))
+            .isInstanceOf(DataIntegrityViolationException.class).hasMessageContaining("CK_ENVANTER_FOTOGRAFI_SHA256");
+        assertThatThrownBy(() -> hedef().update(ekle, null, "envanter/test/c.jpg", "image/jpeg", ozet, 0))
+            .isInstanceOf(DataIntegrityViolationException.class).hasMessageContaining("ORA-01400");
+        // Başka bir envanterin kendi kapağı olabilir
+        long baska = say("SELECT MAX(ID) FROM ENVANTER");
+        hedef().update(ekle, baska, "envanter/test/baska.jpg", "image/webp", ozet, 1);
+        assertThat(say("SELECT COUNT(*) FROM ENVANTER_FOTOGRAFI WHERE KAPAK = 1")).isEqualTo(2);
+    }
+
+    // ------------------------------------------------------------------------------ 12
+
+    /**
      * Türetme kuralının çelişki dalı: modelin demirbaşları iki farklı kategorideyse model kategorisi
      * seçilmez, boş kalır ve KATEGORI_BELIRSIZ (HAM_DEGER = 2) yazılır. Ayrıca dolu kategori ezilmez.
      * Son senaryo: hedef veriyi değiştirir.
      */
     @Test
-    @Order(11)
+    @Order(12)
     void celiskili_demirbas_kategorilerinde_model_kategorisi_secilmez() {
         long model1 = say("SELECT ID FROM MODEL WHERE TUR = 'DEMIRBAS' AND AD = 'Model1'");
         long alt = say("SELECT ID FROM KATEGORI WHERE AD = 'Alt'");

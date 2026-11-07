@@ -158,6 +158,7 @@ erDiagram
     %% ---------- Envanter ----------
     ENVANTER ||--o{ BARKOD : "ENVANTER_ID"
     ENVANTER ||--o{ ENVANTER_APARATI : "ENVANTER_ID (NOT NULL)"
+    ENVANTER ||--o{ ENVANTER_FOTOGRAFI : "ENVANTER_ID (NOT NULL)"
     ENVANTER ||--o{ ENVANTER_NOTU : "ENVANTER_ID"
     ENVANTER ||--o{ ENVANTER_HAREKETI : "ENVANTER_ID, TUR (aynı tür)"
     DEPO ||--o{ ENVANTER_HAREKETI : "NEREDEN / NEREYE / ALAN_DEPO_ID"
@@ -390,6 +391,25 @@ Bir demirbaşla birlikte gelen aparatlar (şarj adaptörü, kablo gibi). Bir dem
 | ACIKLAMA | VARCHAR2(500 CHAR) | İsteğe bağlı |
 
 İlişki diğer alt tablolar gibi tek yönlüdür (`DemirbasAparati.demirbas`, LAZY); `Demirbas`'ta koleksiyon yok.
+
+**`ENVANTER_FOTOGRAFI`** (yeni sistemin tablosu, legacy kaynağı yok; karar 2026-11-08)
+
+Yeni uygulamada ürün eklenirken fotoğrafı da eklenir. Bir envanterin (demirbaş ya da sarf) birden fazla fotoğrafı olabilir; her fotoğraf tek bir envantere aittir. Dosyanın kendisi **veritabanında değil**, S3 uyumlu nesne deposunda durur (kurumda Huawei OceanStor Pacific düşünülüyor, kesinleşmedi). Tabloda nesnenin anahtarı ve dosya bilgisi tutulur; URL ve bucket adı bilerek tutulmaz (adres ve ortam değişebilir, anahtar değişmez).
+
+| Kolon | Tip | Kural |
+|---|---|---|
+| ENVANTER_ID | NUMBER(19) NN → ENVANTER | FK NN. Envantersiz fotoğraf olmaz. Index'li (ENVANTER_ID, SIRA) |
+| NESNE_ANAHTARI | VARCHAR2(500 CHAR) NN, UNIQUE | Depodaki nesne anahtarı (ör. `envanter/1001/<uuid>.jpg`); değişmez |
+| DOSYA_ADI | VARCHAR2(255 CHAR) NN | Yüklenen dosyanın özgün adı |
+| ICERIK_TURU | VARCHAR2(100 CHAR) NN | `image/jpeg`, `image/png`, `image/webp`, `image/heic` (CHECK + entity) |
+| BOYUT | NUMBER(19) NN | Bayt; sıfırdan büyük |
+| SHA256 | VARCHAR2(64 CHAR) NN | Dosya özeti (64 haneli küçük harf onaltılık); bütünlük doğrulaması ve çift yükleme tespiti |
+| GENISLIK, YUKSEKLIK | NUMBER(10) | Piksel; bilinmiyorsa boş, verilirse sıfırdan büyük |
+| SIRA | NUMBER(10) NN, varsayılan 0 | Gösterim sırası |
+| KAPAK | NUMBER(1) NN, varsayılan 0 | Envanter başına **en fazla bir** kapak (fonksiyon tabanlı tekil index `UX_ENVANTER_FOTOGRAFI_KAPAK`) |
+| ACIKLAMA | VARCHAR2(500 CHAR) | İsteğe bağlı |
+
+Uygulama servisinin sorumlulukları (backend'de): yükleme sırası önce nesne, sonra satır (satır yazılamazsa nesne silinir); silme sırası önce satır, sonra nesne; kapağı değiştirmek eski ve yeni kapağı tek işlemde günceller; depoda sahipsiz kalan nesneler anahtar listesiyle karşılaştırılıp temizlenir.
 **`R_COKZIMMET` → `COKLU_ZIMMET`**
 
 | Legacy | Hedef | Tip | Kural |
@@ -588,9 +608,9 @@ Stok miktarı tutulmuyor. TUR'un anlamı doğrulanmadan stok hesabı yapılmayac
 
 | | Sayı |
 |---|---|
-| Legacy tablo | 24 hedef tabloya taşınır → 17 hedef tablo (kategori, marka, model ve firma çiftleri TUR ile ortak tablolarda; demirbaş ve sarf malzemesi `ENVANTER`'de, hareketleri `ENVANTER_HAREKETI`'nde; yerel ve genel sayım satırları `SAYIM_SATIRI`'nda; veri birleştirmesi yok). 2 tablo sadece arşivlenir, `R_APARAT` taşınmaz (K9). Hedefte ayrıca yeni `ENVANTER_APARATI`; toplam 18 tablo |
+| Legacy tablo | 24 hedef tabloya taşınır → 17 hedef tablo (kategori, marka, model ve firma çiftleri TUR ile ortak tablolarda; demirbaş ve sarf malzemesi `ENVANTER`'de, hareketleri `ENVANTER_HAREKETI`'nde; yerel ve genel sayım satırları `SAYIM_SATIRI`'nda; veri birleştirmesi yok). 2 tablo sadece arşivlenir, `R_APARAT` taşınmaz (K9). Hedefte ayrıca yeni `ENVANTER_APARATI` ve `ENVANTER_FOTOGRAFI`; toplam 19 tablo |
 | Legacy kolon | 217 taşınan (225 eksi `R_APARAT`'ın 8 kolonu; 0.16'daki listeyle aynı küme). Her biri yukarıda bir hedef kolona ya da MAP'e gidiyor. Ayrıca hepsi `MIG_HAM_VERI`'de |
-| FK | 28 (bileşik FK'ler dahil). Zorunlu: `ENVANTER_APARATI.ENVANTER_ID` (NOT NULL) ve sarf modelinin `MARKA_ID`'si (CHECK) |
+| FK | 29 (bileşik FK'ler dahil). Zorunlu: `ENVANTER_APARATI.ENVANTER_ID`, `ENVANTER_FOTOGRAFI.ENVANTER_ID` (NOT NULL) ve sarf modelinin `MARKA_ID`'si (CHECK) |
 | REF (ZAYIF) | 7 kolon: COKLU_ZIMMET ×1, SAYIM_SATIRI (YEREL) ×2, ENVANTER_HAREKETI (SARF) ×3, ZIMMET_KAYDI ×1. `R_IADE_HAVUZU` artık sadece arşivleniyor |
 
 ---
