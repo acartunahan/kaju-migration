@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: Kaynak kodu al
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: JDK 25 (Temurin)
         uses: actions/setup-java@v4
