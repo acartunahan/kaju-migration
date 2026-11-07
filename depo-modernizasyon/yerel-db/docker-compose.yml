@@ -1,0 +1,43 @@
+# =====================================================================================
+# Yerel geliştirme veritabanı: Oracle Free 23, sabit port 1521, kalıcı veri.
+# Uçtan uca testteki kurulumla aynı 3 kullanıcı ve aynı legacy şema; veri olarak init/02_mock_veri.sql'deki gerçekçi mock veri yüklenir;
+# fark: Testcontainers rastgele port kullanır ve iş bitince siler, bu konteyner kalır.
+#
+#   docker compose -f yerel-db/docker-compose.yml up -d     -> başlat (ilk açılış birkaç dakika)
+#   docker compose -f yerel-db/docker-compose.yml down      -> durdur (veri kalır)
+#   docker compose -f yerel-db/docker-compose.yml down -v   -> durdur ve SİL (sonraki açılışta sıfırdan kurulur)
+#
+# İlk kurulum: şifreler yerel-db/.env dosyasından okunur (git'e girmez).
+#   cp yerel-db/.env.example yerel-db/.env   -> sonra değerleri doldurun
+#
+# Bağlantı: jdbc:oracle:thin:@//localhost:1521/FREEPDB1
+#   DEPO          legacy şemanın sahibi (test verisi burada)       şifre: DEPO_SIFRE
+#   DEPO_OKUYUCU  migration'ın legacy kullanıcısı, sadece SELECT  şifre: OKUYUCU_SIFRE
+#   HEDEF         yeni şema; tablolar Flyway ile kurulur          şifre: HEDEF_SIFRE
+#
+# Şifreler yalnızca bu yerel test veritabanı içindir; iş yerindeki hiçbir sistemle ilgisi yoktur.
+# =====================================================================================
+services:
+  oracle:
+    image: ${ORACLE_IMAJ:-gvenzl/oracle-free:23-slim-faststart}
+    container_name: depo-oracle
+    ports:
+      - "1521:1521"
+    environment:
+      ORACLE_PASSWORD: "${ORACLE_PASSWORD:?yerel-db/.env eksik - .env.example dosyasını kopyalayın}"
+      DEPO_SIFRE: "${DEPO_SIFRE:?yerel-db/.env eksik}"
+      OKUYUCU_SIFRE: "${OKUYUCU_SIFRE:?yerel-db/.env eksik}"
+      HEDEF_SIFRE: "${HEDEF_SIFRE:?yerel-db/.env eksik}"
+    volumes:
+      - depo-oracle-veri:/opt/oracle/oradata
+      - ./init:/container-entrypoint-initdb.d:ro
+      - ../depo-migration/src/test/resources/legacy:/legacy:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+volumes:
+  depo-oracle-veri:
