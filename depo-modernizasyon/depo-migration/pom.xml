@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>tr.depo</groupId>
+        <artifactId>depo-modernizasyon</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>depo-migration</artifactId>
+    <packaging>jar</packaging>
+    <name>depo-migration</name>
+    <description>
+        Legacy DEPO şemasından yeni şemaya tek yönlü, tekrar çalıştırılabilir Spring Batch veri göçü.
+        Legacy veritabanına yalnızca SELECT gönderir.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>tr.depo</groupId>
+            <artifactId>depo-domain</artifactId>
+        </dependency>
+
+        <!-- JPA + Hibernate + HikariCP + spring-jdbc (hedef veritabanı) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <!--
+            Spring Boot 4'te Spring Batch iki starter'a ayrıldı. JDBC tabanlı JobRepository
+            (restart için şart) bu starter ile gelir. Derlemede artifact bulunamazsa
+            Boot 4 starter listesinden doğru adı kontrol edin (bkz. asama4 notları, 6. bölüm).
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-batch-jdbc</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-oracle</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.oracle.database.jdbc</groupId>
+            <artifactId>ojdbc11</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- Test: JUnit 5, AssertJ, Mockito, Spring Test -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!--
+            Testcontainers sürümü Boot BOM'undan. Boot 4 Testcontainers 2.x getirir ve 2.x'te
+            modül artifact'leri "testcontainers-" önekiyle adlandırılır. 1.x kullanılıyorsa adı
+            "oracle-free"dir (bkz. asama5 notları, D9).
+        -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-oracle-free</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <!--
+                Mockito'nun kendini çalışırken bağlaması (self-attach) yeni JDK'larda kapatılıyor.
+                'properties' hedefi ${org.mockito:mockito-core:jar} özelliğini üretir; testler
+                Mockito'yu -javaagent olarak yükler.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>-Xshare:off "-javaagent:${org.mockito:mockito-core:jar}"</argLine>
+                </configuration>
+            </plugin>
+            <!--
+                Surefire varsayılan olarak yalnızca *Test/*Tests/Test* adlı sınıfları çalıştırır.
+                Uçtan uca test (GocEntegrasyonTesti, Docker + Oracle ister) bu kalıba uymaz;
+                failsafe ile 'mvn verify' aşamasında çalışır. 'mvn test' yalnızca birim testleridir.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <includes>
+                        <include>**/*EntegrasyonTesti.java</include>
+                    </includes>
+                    <argLine>-Xshare:off "-javaagent:${org.mockito:mockito-core:jar}"</argLine>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

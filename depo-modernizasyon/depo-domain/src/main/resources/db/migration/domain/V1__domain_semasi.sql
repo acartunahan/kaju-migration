@@ -1,0 +1,568 @@
+-- =====================================================================================
+-- V1 — Domain şeması (Aşama 2 tasarımı, Aşama 3 entity'leri ile birebir)
+--
+-- * Hedef DB karakter seti AL32UTF8 olmalı (Aşama 2, K5).
+-- * Tüm metin kolonları CHAR semantiğinde.
+-- * Her tablonun kendi sequence'i: INCREMENT BY 50 = Hibernate allocationSize 50.
+-- * GÜÇLÜ ilişkiler NULL olabilen FK (K2). Zorunlu ilişkiler: sarf modelinin markası
+--   (CHECK) ve ENVANTER_APARATI.ENVANTER_ID (NOT NULL).
+-- * ENVANTER: demirbaş ve sarf malzemeleri tek tabloda, TUR (DEMIRBAS / SARF) ile ayrılır
+--   (kullanıcı kararı 2026-11-07). Legacy: R_DEMIRBAS -> DEMIRBAS, R_TUKETIMCINSLERI -> SARF.
+--   ENVANTER_HAREKETI: R_HAREKET (DEMIRBAS) + R_SARFDEMIRBAS (SARF). SARF_LOG -> ZIMMET_KAYDI.
+-- * SAYIM_SATIRI: yerel (R_SAYIM_YEREL) ve genel (R_SAYIM_GENEL) sayım satırları tek tabloda,
+--   TUR (YEREL / GENEL) ile ayrılır (kullanıcı kararı 2026-11-08).
+-- * KATEGORI, MARKA, MODEL, FIRMA demirbaş ve sarf tanımlarının ortak tablolarıdır; TUR kolonu
+--   (DEMIRBAS / SARF) satırları ayırır, kayıtlar birleştirilmez. Türler arası yanlış bağlantı
+--   bileşik FK'lerle engellenir: MODEL(MARKA_ID, TUR) -> MARKA(ID, TUR); ENVANTER(X_ID, TUR) -> X(ID, TUR);
+--   IHALE tarafında sabit 'DEMIRBAS' değerli sanal TANIM_TURU kolonu ile.
+-- * Hiçbir FK'de ON DELETE CASCADE yok.
+-- * FK kolonlarının hepsine index kondu (Oracle FK'lere otomatik index açmaz;
+--   index yoksa ebeveyn silme/güncellemede tablo kilidi riski olur).
+-- * Domain script'leri V1–V999 aralığını kullanır; göç tabloları V1000+ (ayrı modül).
+-- * Şema henüz canlıya kurulmadı: aparat (eski V2) ve tanım birleştirme kararları
+--   (2026-11-07) doğrudan bu script'e işlendi. R_IADE_HAVUZU ve R_ARIZA_DEGERLENDIRME için
+--   tablo yok: kapsam kararıyla sadece arşivlenir (göç modülü, MIG_HAM_VERI).
+-- =====================================================================================
+
+
+-- -------------------------------------------------------------------------------------
+-- SEQUENCE'LER
+-- -------------------------------------------------------------------------------------
+CREATE SEQUENCE DEPO_SEQ                  START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE MARKA_SEQ                 START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE MODEL_SEQ                 START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE KATEGORI_SEQ              START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE FIRMA_SEQ                 START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE IHALE_SEQ                 START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE ENVANTER_SEQ              START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE BARKOD_SEQ                START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE ENVANTER_NOTU_SEQ         START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE ENVANTER_HAREKETI_SEQ     START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE ENVANTER_APARATI_SEQ      START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE COKLU_ZIMMET_SEQ          START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE ARIZA_SEQ                 START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE ARIZA_ISLEMI_SEQ          START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE SAYIM_SEQ                 START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE SAYIM_SATIRI_SEQ          START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE ZIMMET_KAYDI_SEQ     START WITH 1 INCREMENT BY 50;
+CREATE SEQUENCE SQL_KAYDI_SEQ             START WITH 1 INCREMENT BY 50;
+
+
+-- =====================================================================================
+-- TANIM
+-- =====================================================================================
+
+CREATE TABLE DEPO (
+    ID                 NUMBER(19)                 NOT NULL,
+    VERSIYON           NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI   TIMESTAMP(6) NOT NULL,
+    OLUSTURAN          VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI  TIMESTAMP(6),
+    GUNCELLEYEN        VARCHAR2(36 CHAR),
+    AD                 VARCHAR2(50 CHAR)          NOT NULL,
+    ACIKLAMA           VARCHAR2(200 CHAR),
+    DURUM_KODU         VARCHAR2(1 CHAR),
+    KAYIT_TARIHI       TIMESTAMP(0),
+    SORUMLU_SICIL      VARCHAR2(10 CHAR),
+    CONSTRAINT PK_DEPO PRIMARY KEY (ID)
+);
+
+-- KATEGORI: katalog kategori ağacı (ör. Elektronik > Bilgisayar > Dizüstü). Demirbaş ve sarf
+-- kategorileri TUR ile ayrılır; bir kategorinin üstü aynı türde olmak zorunda (bileşik FK).
+-- Legacy: RESAT_SABIT_KOD -> DEMIRBAS (eski uygulamanın kategori ağacı), SARF_KATEGORI -> SARF.
+-- Katalog bağlantısı MODEL.KATEGORI_ID; legacy değeri ENVANTER.KATEGORI_ID'de korunur.
+CREATE TABLE KATEGORI (
+    ID                 NUMBER(19)                 NOT NULL,
+    VERSIYON           NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI   TIMESTAMP(6) NOT NULL,
+    OLUSTURAN          VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI  TIMESTAMP(6),
+    GUNCELLEYEN        VARCHAR2(36 CHAR),
+    TUR                VARCHAR2(10 CHAR)          NOT NULL,
+    UST_KATEGORI_ID    NUMBER(19),
+    AD                 VARCHAR2(120 CHAR)         NOT NULL,
+    YORUM              VARCHAR2(100 CHAR),
+    DURUM_KODU         VARCHAR2(1 CHAR),
+    KAYIT_TARIHI       TIMESTAMP(0),
+    DEPO_ID            NUMBER(19),
+    CONSTRAINT PK_KATEGORI PRIMARY KEY (ID),
+    CONSTRAINT UK_KATEGORI_ID_TUR UNIQUE (ID, TUR),
+    CONSTRAINT CK_KATEGORI_TUR CHECK (TUR IN ('DEMIRBAS', 'SARF')),
+    CONSTRAINT CK_KATEGORI_UST CHECK (UST_KATEGORI_ID IS NULL OR UST_KATEGORI_ID <> ID),
+    CONSTRAINT CK_KATEGORI_DEMIRBAS CHECK (TUR <> 'DEMIRBAS' OR DURUM_KODU IS NOT NULL)
+);
+
+-- MARKA / MODEL / FIRMA: demirbaş ve sarf tanımlarının ortak tabloları (TUR ile ayrılır).
+-- Sadece bir tarafta dolu gelen kolonlar NULL olabilir; taraflara özgü zorunluluklar CHECK ile.
+CREATE TABLE MARKA (
+    ID                 NUMBER(19)                 NOT NULL,
+    VERSIYON           NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI   TIMESTAMP(6) NOT NULL,
+    OLUSTURAN          VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI  TIMESTAMP(6),
+    GUNCELLEYEN        VARCHAR2(36 CHAR),
+    TUR                VARCHAR2(10 CHAR)          NOT NULL,
+    AD                 VARCHAR2(255 CHAR)         NOT NULL,
+    ACIKLAMA           VARCHAR2(200 CHAR),
+    DURUM_KODU         VARCHAR2(1 CHAR),
+    KAYIT_TARIHI       TIMESTAMP(0),
+    AKTIF              NUMBER(1),
+    DEPO_ID            NUMBER(19),
+    CONSTRAINT PK_MARKA PRIMARY KEY (ID),
+    CONSTRAINT UK_MARKA_ID_TUR UNIQUE (ID, TUR),
+    CONSTRAINT CK_MARKA_TUR CHECK (TUR IN ('DEMIRBAS', 'SARF')),
+    CONSTRAINT CK_MARKA_AKTIF CHECK (AKTIF IN (0, 1)),
+    CONSTRAINT CK_MARKA_SARF_AKTIF CHECK (TUR <> 'SARF' OR AKTIF IS NOT NULL)
+);
+
+CREATE TABLE MODEL (
+    ID                 NUMBER(19)                 NOT NULL,
+    VERSIYON           NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI   TIMESTAMP(6) NOT NULL,
+    OLUSTURAN          VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI  TIMESTAMP(6),
+    GUNCELLEYEN        VARCHAR2(36 CHAR),
+    TUR                VARCHAR2(10 CHAR)          NOT NULL,
+    MARKA_ID           NUMBER(19),
+    KATEGORI_ID        NUMBER(19),
+    AD                 VARCHAR2(255 CHAR)         NOT NULL,
+    ACIKLAMA           VARCHAR2(200 CHAR),
+    DURUM_KODU         VARCHAR2(1 CHAR),
+    KAYIT_TARIHI       TIMESTAMP(0),
+    AKTIF              NUMBER(1),
+    DEPO_ID            NUMBER(19),
+    CONSTRAINT PK_MODEL PRIMARY KEY (ID),
+    CONSTRAINT UK_MODEL_ID_TUR UNIQUE (ID, TUR),
+    CONSTRAINT CK_MODEL_TUR CHECK (TUR IN ('DEMIRBAS', 'SARF')),
+    CONSTRAINT CK_MODEL_AKTIF CHECK (AKTIF IN (0, 1)),
+    CONSTRAINT CK_MODEL_SARF CHECK (TUR <> 'SARF' OR (MARKA_ID IS NOT NULL AND AKTIF IS NOT NULL))
+);
+
+CREATE TABLE FIRMA (
+    ID                 NUMBER(19)                 NOT NULL,
+    VERSIYON           NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI   TIMESTAMP(6) NOT NULL,
+    OLUSTURAN          VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI  TIMESTAMP(6),
+    GUNCELLEYEN        VARCHAR2(36 CHAR),
+    TUR                VARCHAR2(10 CHAR)          NOT NULL,
+    AD                 VARCHAR2(255 CHAR),
+    YETKILI_AD         VARCHAR2(255 CHAR),
+    YETKILI_TELEFON    VARCHAR2(50 CHAR),
+    IRTIBAT_AD         VARCHAR2(255 CHAR),
+    IRTIBAT_TELEFON    VARCHAR2(255 CHAR),
+    TELEFON1           VARCHAR2(50 CHAR),
+    TELEFON2           VARCHAR2(50 CHAR),
+    FAKS               VARCHAR2(50 CHAR),
+    WEB_ADRESI         VARCHAR2(255 CHAR),
+    ADRES              VARCHAR2(255 CHAR),
+    NOTLAR             VARCHAR2(300 CHAR),
+    DURUM_KODU         VARCHAR2(1 CHAR),
+    KAYIT_TARIHI       TIMESTAMP(0),
+    DEPO_ID            NUMBER(19),
+    CONSTRAINT PK_FIRMA PRIMARY KEY (ID),
+    CONSTRAINT UK_FIRMA_ID_TUR UNIQUE (ID, TUR),
+    CONSTRAINT CK_FIRMA_TUR CHECK (TUR IN ('DEMIRBAS', 'SARF')),
+    CONSTRAINT CK_FIRMA_DEMIRBAS CHECK (TUR <> 'DEMIRBAS' OR (DURUM_KODU IS NOT NULL AND KAYIT_TARIHI IS NOT NULL)),
+    CONSTRAINT CK_FIRMA_SARF CHECK (TUR <> 'SARF' OR AD IS NOT NULL)
+);
+
+
+CREATE TABLE IHALE (
+    ID                   NUMBER(19)                 NOT NULL,
+    VERSIYON             NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI     TIMESTAMP(6) NOT NULL,
+    OLUSTURAN            VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI    TIMESTAMP(6),
+    GUNCELLEYEN          VARCHAR2(36 CHAR),
+    AD                   VARCHAR2(50 CHAR),
+    IHALE_TARIHI         TIMESTAMP(0),
+    KABUL_TARIHI         TIMESTAMP(0),
+    SOZLESME_TARIHI      TIMESTAMP(0),
+    BIRIM_KODU           NUMBER,
+    PERSONEL_METNI       VARCHAR2(50 CHAR),
+    FIRMA_ID             NUMBER(19),
+    -- Sanal kolon: FIRMA_ID'nin yalnızca DEMIRBAS türündeki firmaya bağlanmasını zorlar.
+    TANIM_TURU           VARCHAR2(10 CHAR) GENERATED ALWAYS AS ('DEMIRBAS') VIRTUAL,
+    ACIKLAMA             VARCHAR2(200 CHAR),
+    DURUM_KODU           VARCHAR2(1 CHAR)           NOT NULL,
+    KAYIT_TARIHI         TIMESTAMP(0)               NOT NULL,
+    KOMISYON_BASKANI     VARCHAR2(100 CHAR),
+    KOMISYON_UYE1        VARCHAR2(100 CHAR),
+    KOMISYON_UYE2        VARCHAR2(100 CHAR),
+    YERINDE_GARANTI_KODU NUMBER,
+    ONARIM_SURESI_KODU   NUMBER,
+    CONSTRAINT PK_IHALE PRIMARY KEY (ID)
+);
+
+
+-- =====================================================================================
+-- DEMİRBAŞ
+-- =====================================================================================
+
+-- ENVANTER: demirbaş ve sarf malzemeleri (TUR). Legacy: R_DEMIRBAS -> DEMIRBAS,
+-- R_TUKETIMCINSLERI -> SARF. Türe özgü zorunluluklar CHECK ile; kategori/marka/model aynı türde (bileşik FK).
+CREATE TABLE ENVANTER (
+    ID                   NUMBER(19)                 NOT NULL,
+    VERSIYON             NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI     TIMESTAMP(6) NOT NULL,
+    OLUSTURAN            VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI    TIMESTAMP(6),
+    GUNCELLEYEN          VARCHAR2(36 CHAR),
+    TUR                  VARCHAR2(10 CHAR)          NOT NULL,
+    DEMIRBAS_NO          NUMBER(19),
+    SERI_NO              VARCHAR2(50 CHAR),
+    BIRIM_KODU           NUMBER,
+    KATEGORI_ID          NUMBER(19),
+    DEPO_ID              NUMBER(19),
+    ALIM_YOLU            VARCHAR2(30 CHAR),
+    AD                   VARCHAR2(100 CHAR),
+    MARKA_ID             NUMBER(19),
+    MODEL_ID             NUMBER(19),
+    IHALE_ID             NUMBER(19),
+    GARANTI_BASLANGIC    TIMESTAMP(0),
+    GARANTI_BITIS        TIMESTAMP(0),
+    ACIKLAMA             VARCHAR2(200 CHAR),
+    DURUM                VARCHAR2(20 CHAR),
+    DURUM_KODU           VARCHAR2(1 CHAR),
+    KAYIT_TARIHI         TIMESTAMP(0),
+    SAYMANLIK_NO         VARCHAR2(50 CHAR),
+    ZIMMETLI_SICIL       VARCHAR2(7 CHAR),
+    IL_SUBE_DAIRE_BSK_NO VARCHAR2(36 CHAR),
+    ALIM_TURU_KODU       VARCHAR2(1 CHAR),
+    CONSTRAINT PK_ENVANTER PRIMARY KEY (ID),
+    CONSTRAINT UK_ENVANTER_ID_TUR UNIQUE (ID, TUR),
+    CONSTRAINT CK_ENVANTER_TUR CHECK (TUR IN ('DEMIRBAS', 'SARF')),
+    CONSTRAINT CK_ENVANTER_ALIM_YOLU CHECK (ALIM_YOLU IN
+        ('BILGI_ISLEM_DB', 'IKMAL_BAKIM_DB', 'HABERLESME_DB', 'HABERALMA_OD', 'KAYNAGI_BELIRSIZ')),
+    CONSTRAINT CK_ENVANTER_DURUM CHECK (DURUM IN ('NORMAL', 'ARIZALI')),
+    CONSTRAINT CK_ENVANTER_DEMIRBAS CHECK (TUR <> 'DEMIRBAS' OR (DURUM IS NOT NULL AND KAYIT_TARIHI IS NOT NULL)),
+    CONSTRAINT CK_ENVANTER_SARF CHECK (TUR <> 'SARF' OR AD IS NOT NULL)
+);
+
+CREATE TABLE BARKOD (
+    ID                 NUMBER(19)                 NOT NULL,
+    VERSIYON           NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI   TIMESTAMP(6) NOT NULL,
+    OLUSTURAN          VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI  TIMESTAMP(6),
+    GUNCELLEYEN        VARCHAR2(36 CHAR),
+    ENVANTER_ID        NUMBER(19),
+    BARKOD             VARCHAR2(50 CHAR)          NOT NULL,
+    SERI_NO_MU         NUMBER(1)                  NOT NULL,
+    CONSTRAINT PK_BARKOD PRIMARY KEY (ID),
+    CONSTRAINT CK_BARKOD_SERI_NO_MU CHECK (SERI_NO_MU IN (0, 1))
+);
+
+CREATE TABLE ENVANTER_NOTU (
+    ID                  NUMBER(19)                 NOT NULL,
+    VERSIYON            NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI    TIMESTAMP(6) NOT NULL,
+    OLUSTURAN           VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI   TIMESTAMP(6),
+    GUNCELLEYEN         VARCHAR2(36 CHAR),
+    ENVANTER_ID         NUMBER(19),
+    NOT_METNI           VARCHAR2(1000 CHAR),
+    ZIMMET_SAHIBI_METNI VARCHAR2(500 CHAR),
+    KAYIT_TARIHI        TIMESTAMP(0),
+    EKLEYEN_ADI         VARCHAR2(123 CHAR),
+    EKLEYEN_SICIL       VARCHAR2(7 CHAR),
+    CONSTRAINT PK_ENVANTER_NOTU PRIMARY KEY (ID)
+);
+
+-- ENVANTER_HAREKETI: demirbaş hareketi (R_HAREKET, TUR = DEMIRBAS) ve sarf stok hareketi
+-- (R_SARFDEMIRBAS, TUR = SARF). Hareketin türü envanterinkiyle aynı (bileşik FK).
+CREATE TABLE ENVANTER_HAREKETI (
+    ID                 NUMBER(19)                 NOT NULL,
+    VERSIYON           NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI   TIMESTAMP(6) NOT NULL,
+    OLUSTURAN          VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI  TIMESTAMP(6),
+    GUNCELLEYEN        VARCHAR2(36 CHAR),
+    TUR                VARCHAR2(10 CHAR)          NOT NULL,
+    ENVANTER_ID        NUMBER(19),
+    ACIKLAMA           VARCHAR2(1000 CHAR),
+    KAYIT_TARIHI       TIMESTAMP(0),
+    -- demirbaş hareketi
+    HAREKET_ADI        VARCHAR2(50 CHAR),
+    NEREDEN_METNI      VARCHAR2(200 CHAR),
+    NEREDEN_DEPO_ID    NUMBER(19),
+    NEREYE_METNI       VARCHAR2(200 CHAR),
+    NEREYE_DEPO_ID     NUMBER(19),
+    ISLEM_YAPAN_SICIL  VARCHAR2(6 CHAR),
+    HAREKET_NO_KODU    NUMBER,
+    -- sarf hareketi
+    MIKTAR             NUMBER(19,4),
+    YON_KODU           VARCHAR2(36 CHAR),
+    SERI_NO            VARCHAR2(200 CHAR),
+    ALIM_TARIHI        TIMESTAMP(0),
+    DURUM_KODU         VARCHAR2(1 CHAR),
+    ALAN_DEPO_ID       NUMBER(19),
+    MARKA_ESKI_REF     VARCHAR2(36 CHAR),
+    MODEL_ESKI_REF     VARCHAR2(36 CHAR),
+    FIRMA_ESKI_REF     VARCHAR2(36 CHAR),
+    CONSTRAINT PK_ENVANTER_HAREKETI PRIMARY KEY (ID),
+    CONSTRAINT CK_ENV_HAREKETI_TUR CHECK (TUR IN ('DEMIRBAS', 'SARF')),
+    CONSTRAINT CK_ENV_HAREKETI_DEMIRBAS CHECK (TUR <> 'DEMIRBAS' OR HAREKET_NO_KODU IS NOT NULL)
+);
+
+-- Demirbaşla birlikte gelen aparatlar (yeni sistemin tablosu; legacy R_APARAT taşınmaz).
+CREATE TABLE ENVANTER_APARATI (
+    ID                 NUMBER(19)                 NOT NULL,
+    VERSIYON           NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI   TIMESTAMP(6)               NOT NULL,
+    OLUSTURAN          VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI  TIMESTAMP(6),
+    GUNCELLEYEN        VARCHAR2(36 CHAR),
+    ENVANTER_ID        NUMBER(19)                 NOT NULL,
+    AD                 VARCHAR2(100 CHAR)         NOT NULL,
+    ADET               NUMBER(10)    DEFAULT 1    NOT NULL,
+    SERI_NO            VARCHAR2(50 CHAR),
+    ACIKLAMA           VARCHAR2(500 CHAR),
+    CONSTRAINT PK_ENVANTER_APARATI PRIMARY KEY (ID),
+    CONSTRAINT CK_ENVANTER_APARATI_ADET CHECK (ADET >= 1),
+    CONSTRAINT CK_ENVANTER_APARATI_AD CHECK (TRIM(AD) IS NOT NULL)
+);
+
+
+CREATE TABLE COKLU_ZIMMET (
+    ID                 NUMBER(19)                 NOT NULL,
+    VERSIYON           NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI   TIMESTAMP(6) NOT NULL,
+    OLUSTURAN          VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI  TIMESTAMP(6),
+    GUNCELLEYEN        VARCHAR2(36 CHAR),
+    ZIMMET_NO_ESKI_REF NUMBER                     NOT NULL,
+    SICIL              VARCHAR2(40 CHAR)          NOT NULL,
+    CONSTRAINT PK_COKLU_ZIMMET PRIMARY KEY (ID)
+);
+
+
+-- =====================================================================================
+-- ARIZA
+-- =====================================================================================
+
+CREATE TABLE ARIZA (
+    ID                 NUMBER(19)                 NOT NULL,
+    VERSIYON           NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI   TIMESTAMP(6) NOT NULL,
+    OLUSTURAN          VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI  TIMESTAMP(6),
+    GUNCELLEYEN        VARCHAR2(36 CHAR),
+    BILDIREN_SICIL     VARCHAR2(36 CHAR)          NOT NULL,
+    DEPO_ID            NUMBER(19),
+    ENVANTER_ID        NUMBER(19),
+    SEBEP              CLOB                       NOT NULL,
+    ASAMA_KODU         NUMBER                     NOT NULL,
+    TARIH              TIMESTAMP(0)               NOT NULL,
+    MIAD               TIMESTAMP(0),
+    TESLIM_TARIHI      TIMESTAMP(0),
+    ILETISIM_TELEFONU  VARCHAR2(15 CHAR),
+    CONSTRAINT PK_ARIZA PRIMARY KEY (ID)
+);
+
+CREATE TABLE ARIZA_ISLEMI (
+    ID                 NUMBER(19)                 NOT NULL,
+    VERSIYON           NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI   TIMESTAMP(6) NOT NULL,
+    OLUSTURAN          VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI  TIMESTAMP(6),
+    GUNCELLEYEN        VARCHAR2(36 CHAR),
+    ARIZA_ID           NUMBER(19),
+    ISLEM_KODU         NUMBER                     NOT NULL,
+    ISLEM_YAPAN_SICIL  VARCHAR2(36 CHAR)          NOT NULL,
+    GOREVLI_SICIL      VARCHAR2(36 CHAR)          NOT NULL,
+    ZAMAN              TIMESTAMP(0)               NOT NULL,
+    MIAD               TIMESTAMP(0)               NOT NULL,
+    ACIKLAMA           CLOB,
+    TUR                VARCHAR2(20 CHAR)          NOT NULL,
+    SIRA_NO            NUMBER(19),
+    CONSTRAINT PK_ARIZA_ISLEMI PRIMARY KEY (ID),
+    CONSTRAINT CK_ARIZA_ISLEMI_TUR CHECK (TUR IN ('ISLEM', 'BILGI', 'SIKAYET', 'TESEKKUR'))
+);
+
+
+-- =====================================================================================
+-- SAYIM
+-- =====================================================================================
+
+CREATE TABLE SAYIM (
+    ID                 NUMBER(19)                 NOT NULL,
+    VERSIYON           NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI   TIMESTAMP(6) NOT NULL,
+    OLUSTURAN          VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI  TIMESTAMP(6),
+    GUNCELLEYEN        VARCHAR2(36 CHAR),
+    KAPSAM             VARCHAR2(20 CHAR)          NOT NULL,
+    BASLIK             VARCHAR2(60 CHAR)          NOT NULL,
+    BASLANGIC_TARIHI   TIMESTAMP(0),
+    BITIS_TARIHI       TIMESTAMP(0),
+    DEPO_ID            NUMBER(19),
+    DURUM              VARCHAR2(20 CHAR),
+    CONSTRAINT PK_SAYIM PRIMARY KEY (ID),
+    CONSTRAINT CK_SAYIM_KAPSAM CHECK (KAPSAM IN ('YEREL', 'GENEL')),
+    CONSTRAINT CK_SAYIM_DURUM CHECK (DURUM IN ('DEVAM_EDIYOR', 'TAMAMLANDI'))
+);
+
+-- Yerel ve genel sayım satırları tek tabloda; TUR ayırır (karar 2026-11-08).
+-- Yerel (R_SAYIM_YEREL): MALZEME_ESKI_REF, ZIMMET_ESKI_REF, MALZEME_TURU zorunlu.
+-- Genel (R_SAYIM_GENEL): ISLEM_TARIHI zorunlu; DEPO_ID, ANLIK_*, ACIKLAMA, MERKEZ_NOTU.
+-- ISLEM kod kümeleri iki türde farklı (K8): CK_SAYIM_SATIRI_ISLEM türe göre ayrı kontrol eder.
+CREATE TABLE SAYIM_SATIRI (
+    ID                 NUMBER(19)                 NOT NULL,
+    VERSIYON           NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI   TIMESTAMP(6) NOT NULL,
+    OLUSTURAN          VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI  TIMESTAMP(6),
+    GUNCELLEYEN        VARCHAR2(36 CHAR),
+    TUR                VARCHAR2(20 CHAR)          NOT NULL,
+    SAYIM_ID           NUMBER(19),
+    ENVANTER_ID        NUMBER(19),
+    ISLEM              VARCHAR2(20 CHAR)          NOT NULL,
+    ISLEM_TARIHI       TIMESTAMP(0),
+    MALZEME_TURU       VARCHAR2(20 CHAR),
+    MALZEME_ESKI_REF   VARCHAR2(36 CHAR),
+    ZIMMET_ESKI_REF    VARCHAR2(36 CHAR),
+    DEPO_ID            NUMBER(19),
+    ANLIK_AD           VARCHAR2(75 CHAR),
+    ANLIK_MARKA        VARCHAR2(50 CHAR),
+    ANLIK_MODEL        VARCHAR2(50 CHAR),
+    ANLIK_SERI_NO      VARCHAR2(50 CHAR),
+    ACIKLAMA           VARCHAR2(150 CHAR),
+    MERKEZ_NOTU        VARCHAR2(150 CHAR),
+    CONSTRAINT PK_SAYIM_SATIRI PRIMARY KEY (ID),
+    CONSTRAINT CK_SAYIM_SATIRI_TUR CHECK (TUR IN ('YEREL', 'GENEL')),
+    CONSTRAINT CK_SAYIM_SATIRI_ISLEM CHECK (
+        (TUR = 'YEREL' AND ISLEM IN ('SAYILMADI', 'SAYILDI', 'ZIMMET_DUZELTME', 'REZERVE'))
+        OR (TUR = 'GENEL' AND ISLEM IN ('SAYILMADI', 'SAYILDI', 'DUZELTME'))),
+    CONSTRAINT CK_SAYIM_SATIRI_MALZEME_TURU CHECK (MALZEME_TURU IN ('ZIMMET', 'SARF')),
+    CONSTRAINT CK_SAYIM_SATIRI_YEREL CHECK (TUR <> 'YEREL'
+        OR (MALZEME_ESKI_REF IS NOT NULL AND ZIMMET_ESKI_REF IS NOT NULL AND MALZEME_TURU IS NOT NULL)),
+    CONSTRAINT CK_SAYIM_SATIRI_GENEL CHECK (TUR <> 'GENEL' OR ISLEM_TARIHI IS NOT NULL),
+    -- Aşama 2, Ç8: yerel sayımda envantere sadece ZIMMET türündeki satırlar bağlanır.
+    CONSTRAINT CK_SAYIM_SATIRI_ENVANTER CHECK (ENVANTER_ID IS NULL OR TUR = 'GENEL' OR MALZEME_TURU = 'ZIMMET')
+);
+
+
+-- =====================================================================================
+-- SARF
+-- =====================================================================================
+
+CREATE TABLE ZIMMET_KAYDI (
+    ID                 NUMBER(19)                 NOT NULL,
+    VERSIYON           NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI   TIMESTAMP(6) NOT NULL,
+    OLUSTURAN          VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI  TIMESTAMP(6),
+    GUNCELLEYEN        VARCHAR2(36 CHAR),
+    SICIL              VARCHAR2(7 CHAR)           NOT NULL,
+    BILGI              VARCHAR2(100 CHAR),
+    ISLEM              VARCHAR2(20 CHAR)          NOT NULL,
+    MALZEME_ESKI_REF   VARCHAR2(36 CHAR),
+    DEPO_ID            NUMBER(19),
+    TARIH              TIMESTAMP(0),
+    ISLEM_YAPAN_SICIL  VARCHAR2(36 CHAR),
+    CONSTRAINT PK_ZIMMET_KAYDI PRIMARY KEY (ID),
+    CONSTRAINT CK_ZIMMET_KAYDI_ISLEM CHECK (ISLEM IN ('ZIMMET', 'DUSUM'))
+);
+
+
+-- =====================================================================================
+-- SİSTEM
+-- =====================================================================================
+
+CREATE TABLE SQL_KAYDI (
+    ID                 NUMBER(19)                 NOT NULL,
+    VERSIYON           NUMBER(10)                 NOT NULL,
+    OLUSTURMA_ZAMANI   TIMESTAMP(6) NOT NULL,
+    OLUSTURAN          VARCHAR2(36 CHAR)          NOT NULL,
+    GUNCELLEME_ZAMANI  TIMESTAMP(6),
+    GUNCELLEYEN        VARCHAR2(36 CHAR),
+    AD                 VARCHAR2(50 CHAR)          NOT NULL,
+    ICERIK             CLOB,
+    KULLANICI_SICIL    VARCHAR2(10 CHAR),
+    DURUM_KODU         VARCHAR2(1 CHAR),
+    KAYIT_TARIHI       TIMESTAMP(0),
+    CONSTRAINT PK_SQL_KAYDI PRIMARY KEY (ID)
+);
+
+
+-- =====================================================================================
+-- FOREIGN KEY'LER (30 adet; hiçbirinde CASCADE yok)
+-- =====================================================================================
+
+ALTER TABLE MARKA                 ADD CONSTRAINT FK_MARKA_DEPO                FOREIGN KEY (DEPO_ID)          REFERENCES DEPO (ID);
+ALTER TABLE MODEL                 ADD CONSTRAINT FK_MODEL_MARKA               FOREIGN KEY (MARKA_ID, TUR)    REFERENCES MARKA (ID, TUR);
+ALTER TABLE MODEL                 ADD CONSTRAINT FK_MODEL_DEPO                FOREIGN KEY (DEPO_ID)          REFERENCES DEPO (ID);
+ALTER TABLE FIRMA                 ADD CONSTRAINT FK_FIRMA_DEPO                FOREIGN KEY (DEPO_ID)          REFERENCES DEPO (ID);
+ALTER TABLE KATEGORI              ADD CONSTRAINT FK_KATEGORI_UST              FOREIGN KEY (UST_KATEGORI_ID, TUR) REFERENCES KATEGORI (ID, TUR);
+ALTER TABLE KATEGORI              ADD CONSTRAINT FK_KATEGORI_DEPO             FOREIGN KEY (DEPO_ID)          REFERENCES DEPO (ID);
+ALTER TABLE MODEL                 ADD CONSTRAINT FK_MODEL_KATEGORI            FOREIGN KEY (KATEGORI_ID, TUR) REFERENCES KATEGORI (ID, TUR);
+ALTER TABLE IHALE                 ADD CONSTRAINT FK_IHALE_FIRMA               FOREIGN KEY (FIRMA_ID, TANIM_TURU) REFERENCES FIRMA (ID, TUR);
+
+ALTER TABLE ENVANTER              ADD CONSTRAINT FK_ENVANTER_KATEGORI         FOREIGN KEY (KATEGORI_ID, TUR) REFERENCES KATEGORI (ID, TUR);
+ALTER TABLE ENVANTER              ADD CONSTRAINT FK_ENVANTER_DEPO             FOREIGN KEY (DEPO_ID)          REFERENCES DEPO (ID);
+ALTER TABLE ENVANTER              ADD CONSTRAINT FK_ENVANTER_MARKA            FOREIGN KEY (MARKA_ID, TUR) REFERENCES MARKA (ID, TUR);
+ALTER TABLE ENVANTER              ADD CONSTRAINT FK_ENVANTER_MODEL            FOREIGN KEY (MODEL_ID, TUR) REFERENCES MODEL (ID, TUR);
+ALTER TABLE ENVANTER              ADD CONSTRAINT FK_ENVANTER_IHALE            FOREIGN KEY (IHALE_ID)         REFERENCES IHALE (ID);
+ALTER TABLE BARKOD                ADD CONSTRAINT FK_BARKOD_ENVANTER           FOREIGN KEY (ENVANTER_ID)      REFERENCES ENVANTER (ID);
+ALTER TABLE ENVANTER_NOTU         ADD CONSTRAINT FK_ENVANTER_NOTU_ENVANTER    FOREIGN KEY (ENVANTER_ID)      REFERENCES ENVANTER (ID);
+ALTER TABLE ENVANTER_HAREKETI     ADD CONSTRAINT FK_ENV_HAREKETI_ENVANTER     FOREIGN KEY (ENVANTER_ID, TUR) REFERENCES ENVANTER (ID, TUR);
+ALTER TABLE ENVANTER_HAREKETI     ADD CONSTRAINT FK_ENV_HAREKETI_NEREDEN_DEPO FOREIGN KEY (NEREDEN_DEPO_ID)  REFERENCES DEPO (ID);
+ALTER TABLE ENVANTER_HAREKETI     ADD CONSTRAINT FK_ENV_HAREKETI_NEREYE_DEPO  FOREIGN KEY (NEREYE_DEPO_ID)   REFERENCES DEPO (ID);
+ALTER TABLE ENVANTER_HAREKETI     ADD CONSTRAINT FK_ENV_HAREKETI_ALAN_DEPO    FOREIGN KEY (ALAN_DEPO_ID)     REFERENCES DEPO (ID);
+ALTER TABLE ENVANTER_APARATI      ADD CONSTRAINT FK_ENVANTER_APARATI_ENVANTER FOREIGN KEY (ENVANTER_ID)      REFERENCES ENVANTER (ID);
+
+ALTER TABLE ARIZA                 ADD CONSTRAINT FK_ARIZA_DEPO                FOREIGN KEY (DEPO_ID)          REFERENCES DEPO (ID);
+ALTER TABLE ARIZA                 ADD CONSTRAINT FK_ARIZA_ENVANTER            FOREIGN KEY (ENVANTER_ID)      REFERENCES ENVANTER (ID);
+ALTER TABLE ARIZA_ISLEMI          ADD CONSTRAINT FK_ARIZA_ISLEMI_ARIZA        FOREIGN KEY (ARIZA_ID)         REFERENCES ARIZA (ID);
+
+ALTER TABLE SAYIM                 ADD CONSTRAINT FK_SAYIM_DEPO                FOREIGN KEY (DEPO_ID)          REFERENCES DEPO (ID);
+ALTER TABLE SAYIM_SATIRI          ADD CONSTRAINT FK_SAYIM_SATIRI_SAYIM        FOREIGN KEY (SAYIM_ID)         REFERENCES SAYIM (ID);
+ALTER TABLE SAYIM_SATIRI          ADD CONSTRAINT FK_SAYIM_SATIRI_ENVANTER     FOREIGN KEY (ENVANTER_ID)      REFERENCES ENVANTER (ID);
+ALTER TABLE SAYIM_SATIRI          ADD CONSTRAINT FK_SAYIM_SATIRI_DEPO         FOREIGN KEY (DEPO_ID)          REFERENCES DEPO (ID);
+
+ALTER TABLE ZIMMET_KAYDI          ADD CONSTRAINT FK_ZIMMET_KAYDI_DEPO         FOREIGN KEY (DEPO_ID)          REFERENCES DEPO (ID);
+
+
+-- =====================================================================================
+-- INDEX'LER
+-- FK kolonları + legacy'de index'i olan arama kolonları (SERI_NO, BARKOD).
+-- Hiçbiri UNIQUE değil: legacy veride tekillik doğrulanamadı.
+-- =====================================================================================
+
+CREATE INDEX IX_MARKA_DEPO               ON MARKA (DEPO_ID);
+CREATE INDEX IX_MODEL_MARKA               ON MODEL (MARKA_ID);
+CREATE INDEX IX_MODEL_DEPO                ON MODEL (DEPO_ID);
+CREATE INDEX IX_FIRMA_DEPO                ON FIRMA (DEPO_ID);
+CREATE INDEX IX_KATEGORI_UST             ON KATEGORI (UST_KATEGORI_ID);
+CREATE INDEX IX_KATEGORI_DEPO            ON KATEGORI (DEPO_ID);
+CREATE INDEX IX_MODEL_KATEGORI           ON MODEL (KATEGORI_ID);
+CREATE INDEX IX_IHALE_FIRMA              ON IHALE (FIRMA_ID);
+
+CREATE INDEX IX_ENVANTER_KATEGORI        ON ENVANTER (KATEGORI_ID);
+CREATE INDEX IX_ENVANTER_DEPO            ON ENVANTER (DEPO_ID);
+CREATE INDEX IX_ENVANTER_MARKA           ON ENVANTER (MARKA_ID);
+CREATE INDEX IX_ENVANTER_MODEL           ON ENVANTER (MODEL_ID);
+CREATE INDEX IX_ENVANTER_IHALE           ON ENVANTER (IHALE_ID);
+CREATE INDEX IX_ENVANTER_SERI_NO         ON ENVANTER (SERI_NO);
+CREATE INDEX IX_ENVANTER_DEMIRBAS_NO     ON ENVANTER (DEMIRBAS_NO);
+CREATE INDEX IX_BARKOD_ENVANTER          ON BARKOD (ENVANTER_ID);
+CREATE INDEX IX_BARKOD_BARKOD            ON BARKOD (BARKOD);
+CREATE INDEX IX_ENVANTER_NOTU_ENVANTER   ON ENVANTER_NOTU (ENVANTER_ID);
+CREATE INDEX IX_ENV_HAREKETI_ENVANTER    ON ENVANTER_HAREKETI (ENVANTER_ID);
+CREATE INDEX IX_ENV_HAREKETI_NEREDEN     ON ENVANTER_HAREKETI (NEREDEN_DEPO_ID);
+CREATE INDEX IX_ENV_HAREKETI_NEREYE      ON ENVANTER_HAREKETI (NEREYE_DEPO_ID);
+CREATE INDEX IX_ENV_HAREKETI_ALAN_DEPO   ON ENVANTER_HAREKETI (ALAN_DEPO_ID);
+CREATE INDEX IX_ENVANTER_APARATI_ENVANTER ON ENVANTER_APARATI (ENVANTER_ID);
+
+CREATE INDEX IX_ARIZA_DEPO               ON ARIZA (DEPO_ID);
+CREATE INDEX IX_ARIZA_ENVANTER           ON ARIZA (ENVANTER_ID);
+CREATE INDEX IX_ARIZA_ISLEMI_ARIZA       ON ARIZA_ISLEMI (ARIZA_ID);
+
+CREATE INDEX IX_SAYIM_DEPO               ON SAYIM (DEPO_ID);
+CREATE INDEX IX_SAYIM_SATIRI_SAYIM       ON SAYIM_SATIRI (SAYIM_ID);
+CREATE INDEX IX_SAYIM_SATIRI_ENVANTER    ON SAYIM_SATIRI (ENVANTER_ID);
+CREATE INDEX IX_SAYIM_SATIRI_DEPO        ON SAYIM_SATIRI (DEPO_ID);
+
+CREATE INDEX IX_ZIMMET_KAYDI_DEPO        ON ZIMMET_KAYDI (DEPO_ID);

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+        Spring Boot 4.0.9: Maven Central'daki en güncel 4.0.x yaması (Kasım 2026'da doğrulandı). Kurum içi Maven deposunda (Nexus/Artifactory)
+        bulunan en güncel 4.0.x yama sürümüne yükseltilmesi önerilir. Hibernate ORM 7.x,
+        Spring Data JPA ve Flyway sürümleri bu parent'ın BOM'undan gelir; alt modüllerde
+        sürüm numarası YAZILMAZ.
+    -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.0.9</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>tr.depo</groupId>
+    <artifactId>depo-modernizasyon</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>depo-modernizasyon</name>
+    <description>DEPO legacy sisteminin Java 25 / Spring Boot 4 ile yeniden yazımı</description>
+
+    <modules>
+        <module>depo-domain</module>
+        <module>depo-migration</module>
+    </modules>
+
+    <properties>
+        <java.version>25</java.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>tr.depo</groupId>
+                <artifactId>depo-domain</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>
