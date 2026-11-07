@@ -154,6 +154,7 @@ public class EnvanterHareketi extends BaseEntity {
 
     /** Envanter hareketle aynı türde olmalı (veritabanında bileşik FK ile de zorlanır). */
     public void setEnvanter(Envanter envanter) {
+        silinmemisOlmali(envanter, "envanter");
         if (envanter != null && org.hibernate.Hibernate.isInitialized(envanter) && envanter.getTur() != tur) {
             throw new IllegalArgumentException("Envanter türü " + tur + " olmalı, " + envanter.getTur() + " verildi");
         }
@@ -197,6 +198,7 @@ public class EnvanterHareketi extends BaseEntity {
     }
 
     public void setNeredenDepo(Depo neredenDepo) {
+        silinmemisOlmali(neredenDepo, "neredenDepo");
         this.neredenDepo = neredenDepo;
     }
 
@@ -213,6 +215,7 @@ public class EnvanterHareketi extends BaseEntity {
     }
 
     public void setNereyeDepo(Depo nereyeDepo) {
+        silinmemisOlmali(nereyeDepo, "nereyeDepo");
         this.nereyeDepo = nereyeDepo;
     }
 
@@ -280,6 +283,7 @@ public class EnvanterHareketi extends BaseEntity {
     }
 
     public void setAlanDepo(Depo alanDepo) {
+        silinmemisOlmali(alanDepo, "alanDepo");
         this.alanDepo = alanDepo;
     }
 

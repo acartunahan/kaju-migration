@@ -97,6 +97,7 @@ public class Kategori extends BaseEntity {
     }
 
     public void setUst(Kategori ust) {
+        silinmemisOlmali(ust, "ust");
         if (ust == this) {
             throw new IllegalArgumentException("Kategori kendisinin üstü olamaz");
         }
@@ -144,6 +145,7 @@ public class Kategori extends BaseEntity {
     }
 
     public void setDepo(Depo depo) {
+        silinmemisOlmali(depo, "depo");
         this.depo = depo;
     }
 }

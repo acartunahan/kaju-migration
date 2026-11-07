@@ -28,7 +28,7 @@ public class ModelKategorisiTuretici {
     private static final Logger log = LoggerFactory.getLogger(ModelKategorisiTuretici.class);
 
     private static final String KATEGORI_SAYISI =
-        "(SELECT COUNT(DISTINCT d.KATEGORI_ID) FROM ENVANTER d WHERE d.MODEL_ID = m.ID)";
+        "(SELECT COUNT(DISTINCT d.KATEGORI_ID) FROM ENVANTER d WHERE d.MODEL_ID = m.ID AND d.SILINME_ZAMANI IS NULL)";
 
     private final JdbcTemplate jdbc;
 
@@ -42,10 +42,10 @@ public class ModelKategorisiTuretici {
     public Sonuc turet(long calismaId) {
         int doldurulan = jdbc.update(
             "UPDATE MODEL m SET "
-                + "m.KATEGORI_ID = (SELECT MIN(d.KATEGORI_ID) FROM ENVANTER d WHERE d.MODEL_ID = m.ID), "
+                + "m.KATEGORI_ID = (SELECT MIN(d.KATEGORI_ID) FROM ENVANTER d WHERE d.MODEL_ID = m.ID AND d.SILINME_ZAMANI IS NULL), "
                 + "m.VERSIYON = m.VERSIYON + 1, "
                 + "m.GUNCELLEME_ZAMANI = SYS_EXTRACT_UTC(SYSTIMESTAMP), m.GUNCELLEYEN = 'MIGRATION' "
-                + "WHERE m.TUR = 'DEMIRBAS' AND m.KATEGORI_ID IS NULL AND " + KATEGORI_SAYISI + " = 1");
+                + "WHERE m.TUR = 'DEMIRBAS' AND m.KATEGORI_ID IS NULL AND m.SILINME_ZAMANI IS NULL AND " + KATEGORI_SAYISI + " = 1");
 
         int belirsiz = jdbc.update(
             "INSERT INTO MIG_SORUN (CALISMA_ID, KURU, SEVIYE, KOD, KAYNAK_TABLO, KAYNAK_ROWID, ESKI_ANAHTAR, "
@@ -58,7 +58,7 @@ public class ModelKategorisiTuretici {
                 + " || ' farklı kategoride; model kategorisi seçilmedi, boş bırakıldı' END, SYSTIMESTAMP "
                 + "FROM MODEL m JOIN MIG_KIMLIK_ESLEME e "
                 + "ON e.KURU = 0 AND e.KAYNAK_TABLO = 'RESAT_MODEL' AND e.HEDEF_TABLO = 'MODEL' AND e.HEDEF_ID = m.ID "
-                + "WHERE m.TUR = 'DEMIRBAS' AND m.KATEGORI_ID IS NULL",
+                + "WHERE m.TUR = 'DEMIRBAS' AND m.KATEGORI_ID IS NULL AND m.SILINME_ZAMANI IS NULL",
             calismaId, SorunKodu.KATEGORI_BELIRSIZ);
 
         log.info("Model kategorisi türetildi: {} model dolduruldu, {} model belirsiz (KATEGORI_BELIRSIZ)",

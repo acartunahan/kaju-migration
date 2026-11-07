@@ -109,6 +109,7 @@ public class ZimmetKaydi extends BaseEntity {
     }
 
     public void setDepo(Depo depo) {
+        silinmemisOlmali(depo, "depo");
         this.depo = depo;
     }
 

@@ -45,6 +45,8 @@ kısıtlarıyla veritabanında korunur. Ayrıntı: [asama2_domain_tasarim.md](as
 - **Hiçbir veri sessizce kaybolmaz.** Her legacy satırı ham JSON olarak `MIG_HAM_VERI`'de saklanır;
   her tablo için `kaynak = aktarılan + açık red` mutabakatı yapılır, alan mutabakatı SQL'i her hedef
   alanı ham değerle karşılaştırır.
+- **Fiziksel silme yok.** Tüm domain tablolarında soft delete (`SILINME_ZAMANI`, `SILEN`); DELETE hem JPA'da
+  hem veritabanı trigger'larıyla reddedilir.
 - **KURU mod önce.** `KURU` hedefe yazmadan rapor üretir; tanınmayan kodlar raporda
   `application.yml`'e eklenecek biçimde listelenir.
 

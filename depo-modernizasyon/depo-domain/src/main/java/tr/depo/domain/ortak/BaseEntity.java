@@ -3,9 +3,14 @@ package tr.depo.domain.ortak;
 import jakarta.persistence.Column;
 import jakarta.persistence.EntityListeners;
 import jakarta.persistence.MappedSuperclass;
+import jakarta.persistence.PreRemove;
 import jakarta.persistence.Version;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Objects;
+import org.hibernate.Hibernate;
+import org.hibernate.annotations.Filter;
+import org.hibernate.annotations.FilterDef;
 import org.hibernate.annotations.FractionalSeconds;
 import org.hibernate.proxy.HibernateProxy;
 import org.springframework.data.annotation.CreatedBy;
@@ -33,10 +38,38 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
  * TIMESTAMP_UTC (3003) koduyla eşler. Oracle JDBC sürücüsü bu kolonu -101 koduyla bildirir ve
  * Hibernate bu kodu tanımadığı için {@code ddl-auto=validate} başlangıçta "wrong column type"
  * hatası verir. Bu, Aşama 5'te Hibernate'in kendi doğrulama kodu çağrılarak tespit edildi.
+ *
+ * <p><b>Soft delete (karar 2026-11-08): fiziksel silme yoktur.</b> Kayıt {@link #sil(String)} ile
+ * silinmiş olarak işaretlenir ({@code SILINME_ZAMANI}, {@code SILEN}); {@link #geriAl()} ile geri
+ * alınır. Fiziksel silme üç katmanda engellenir:
+ * <ol>
+ *   <li>JPA: {@code EntityManager.remove()} (ve Spring Data {@code delete*()}) {@link #fizikselSilmeYasak()}
+ *       ile veritabanına gitmeden reddedilir.</li>
+ *   <li>Veritabanı: her domain tablosunda {@code BEFORE DELETE} trigger'ı ({@code TRG_<TABLO>_SILME_YASAK})
+ *       her DELETE ifadesini ORA-20001 ile reddeder (native SQL ve elle yapılan silmeler dahil).</li>
+ *   <li>Yetki (önerilen, DBA): uygulama kullanıcısına DELETE ve TRUNCATE yetkisi verilmez.</li>
+ * </ol>
+ *
+ * <p><b>Silinmiş kayıtların görünürlüğü:</b> {@value #SILINMEMIS_FILTRESI} filtresi otomatik açıktır
+ * ({@code autoEnabled}). HQL/JPQL/Criteria sorguları (Spring Data repository metotları dahil) silinmiş
+ * kayıtları getirmez. Filtre ID ile yüklemeye uygulanmaz ({@code applyToLoadByKey = false}):
+ * {@code find()}, {@code getReference()} ve LAZY ilişkiler silinmiş kaydı yine yükler; böylece silinmiş
+ * bir envantere ait geçmiş hareketler bozulmaz. Silinmişler dahil liste gerektiğinde oturumda filtre
+ * kapatılır: {@code session.disableFilter(BaseEntity.SILINMEMIS_FILTRESI)}. Native SQL filtrelenmez;
+ * native sorgularda {@code SILINME_ZAMANI IS NULL} koşulu elle yazılmalıdır.
  */
 @MappedSuperclass
 @EntityListeners(AuditingEntityListener.class)
+@FilterDef(name = BaseEntity.SILINMEMIS_FILTRESI, defaultCondition = "SILINME_ZAMANI IS NULL",
+    autoEnabled = true, applyToLoadByKey = false)
+@Filter(name = BaseEntity.SILINMEMIS_FILTRESI)
 public abstract class BaseEntity {
+
+    /** Silinmiş kayıtları sorgulardan gizleyen Hibernate filtresinin adı. */
+    public static final String SILINMEMIS_FILTRESI = "silinmemis";
+
+    /** {@code SILEN} kolonunun uzunluğu (audit kolonlarıyla aynı). */
+    private static final int SILEN_UZUNLUGU = 36;
 
     @Version
     @Column(name = "VERSIYON", nullable = false)
@@ -59,6 +92,15 @@ public abstract class BaseEntity {
     @LastModifiedBy
     @Column(name = "GUNCELLEYEN", length = 36)
     private String guncelleyen;
+
+    /** Silinme zamanı (UTC duvar saati). NULL = kayıt silinmemiş. */
+    @FractionalSeconds(6)
+    @Column(name = "SILINME_ZAMANI")
+    private LocalDateTime silinmeZamani;
+
+    /** Kaydı silen kullanıcı. SILINME_ZAMANI ile birlikte dolu ya da birlikte boştur (CK_<TABLO>_SILME). */
+    @Column(name = "SILEN", length = 36)
+    private String silen;
 
     protected BaseEntity() {
     }
@@ -83,6 +125,79 @@ public abstract class BaseEntity {
 
     public String getGuncelleyen() {
         return guncelleyen;
+    }
+
+    public LocalDateTime getSilinmeZamani() {
+        return silinmeZamani;
+    }
+
+    public String getSilen() {
+        return silen;
+    }
+
+    public boolean isSilindi() {
+        return silinmeZamani != null;
+    }
+
+    /**
+     * Kaydı silinmiş olarak işaretler (soft delete). Zaman UTC duvar saatidir (audit alanlarıyla aynı).
+     * İşlem bir güncellemedir: {@code VERSIYON} artar, {@code GUNCELLEME_ZAMANI}/{@code GUNCELLEYEN} dolar.
+     *
+     * @param silen kaydı silen kullanıcı (sicil ya da kullanıcı adı, en fazla 36 karakter)
+     * @throws IllegalStateException kayıt zaten silinmişse
+     */
+    public void sil(String silen) {
+        sil(silen, LocalDateTime.now(ZoneOffset.UTC));
+    }
+
+    /** {@link #sil(String)} ile aynı; zaman dışarıdan verilir (test ve toplu işlemler için). */
+    public void sil(String silen, LocalDateTime zaman) {
+        Objects.requireNonNull(silen, "silen");
+        Objects.requireNonNull(zaman, "zaman");
+        String temiz = silen.strip();
+        if (temiz.isEmpty() || temiz.length() > SILEN_UZUNLUGU) {
+            throw new IllegalArgumentException(
+                "Silen kullanıcı boş olamaz ve en fazla " + SILEN_UZUNLUGU + " karakter olabilir");
+        }
+        if (isSilindi()) {
+            throw new IllegalStateException(gercekSinif(this).getSimpleName() + " zaten silinmiş: id=" + getId());
+        }
+        this.silinmeZamani = zaman;
+        this.silen = temiz;
+    }
+
+    /**
+     * Silinmiş kaydı geri alır.
+     *
+     * @throws IllegalStateException kayıt silinmemişse
+     */
+    public void geriAl() {
+        if (!isSilindi()) {
+            throw new IllegalStateException(gercekSinif(this).getSimpleName() + " silinmemiş: id=" + getId());
+        }
+        this.silinmeZamani = null;
+        this.silen = null;
+    }
+
+    /**
+     * Fiziksel silme yasak: {@code EntityManager.remove()} ya da Spring Data {@code delete*()} çağrıları
+     * veritabanına gitmeden reddedilir. Silmek için {@link #sil(String)} kullanılır.
+     */
+    @PreRemove
+    protected void fizikselSilmeYasak() {
+        throw new UnsupportedOperationException("Fiziksel silme yasak (" + gercekSinif(this).getSimpleName()
+            + ", id=" + getId() + "). Kaydı silmek için sil(silen) kullanın.");
+    }
+
+    /**
+     * Bir ilişkiye silinmiş kayıt bağlanmasını engeller. Yüklenmemiş LAZY proxy'lerde kontrol atlanır
+     * (sorgu tetiklemez). Var olan bağlantılar korunur; kural yalnızca setter çağrıldığında uygulanır.
+     */
+    protected static void silinmemisOlmali(BaseEntity hedef, String alan) {
+        if (hedef != null && Hibernate.isInitialized(hedef) && hedef.isSilindi()) {
+            throw new IllegalArgumentException(alan + " silinmiş bir kayda bağlanamaz: "
+                + gercekSinif(hedef).getSimpleName() + " id=" + hedef.getId());
+        }
     }
 
     /**

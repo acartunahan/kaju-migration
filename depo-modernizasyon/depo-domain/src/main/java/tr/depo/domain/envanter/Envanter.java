@@ -195,6 +195,7 @@ public class Envanter extends BaseEntity {
 
     /** Kategori envanterle aynı türde olmalı (veritabanında bileşik FK ile de zorlanır). */
     public void setKategori(Kategori kategori) {
+        silinmemisOlmali(kategori, "kategori");
         MalzemeTuru.tanimDogrula(tur, kategori);
         this.kategori = kategori;
     }
@@ -204,6 +205,7 @@ public class Envanter extends BaseEntity {
     }
 
     public void setDepo(Depo depo) {
+        silinmemisOlmali(depo, "depo");
         this.depo = depo;
     }
 
@@ -232,6 +234,7 @@ public class Envanter extends BaseEntity {
 
     /** Marka envanterle aynı türde olmalı (veritabanında bileşik FK ile de zorlanır). */
     public void setMarka(Marka marka) {
+        silinmemisOlmali(marka, "marka");
         MalzemeTuru.tanimDogrula(tur, marka);
         this.marka = marka;
     }
@@ -242,6 +245,7 @@ public class Envanter extends BaseEntity {
 
     /** Model envanterle aynı türde olmalı (veritabanında bileşik FK ile de zorlanır). */
     public void setModel(Model model) {
+        silinmemisOlmali(model, "model");
         MalzemeTuru.tanimDogrula(tur, model);
         this.model = model;
     }
@@ -251,6 +255,7 @@ public class Envanter extends BaseEntity {
     }
 
     public void setIhale(Ihale ihale) {
+        silinmemisOlmali(ihale, "ihale");
         this.ihale = ihale;
     }
 

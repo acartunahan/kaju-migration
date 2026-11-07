@@ -54,8 +54,9 @@ Maven koordinatları: `groupId = tr.depo`, `artifactId = depo-domain`, `version 
 
 - Hedef şema **19 tablo**, Flyway `V1` tek script (henüz canlıya kurulmadı, bu yüzden değişiklikler
   doğrudan V1'e işlendi; **canlıya kurulduktan sonra V1 asla değiştirilmez**, yeni değişiklik `V2`, `V3`…).
-- Testler: 40 domain birim testi, 24 migration birim testi, 12 uçtan uca senaryo (gerçek Oracle,
+- Testler: 48 domain birim testi, 24 migration birim testi, 13 uçtan uca senaryo (gerçek Oracle,
   Testcontainers). GitHub Actions CI her push'ta `mvn verify` çalıştırır ve yeşil.
+- Tüm tablolarda soft delete; fiziksel silme yasak (bkz. 3.4).
 - Göç, gerçekçi mock legacy veriyle (27 tablo, 1.741 satır) yerelde çalıştırıldı: tüm tablolarda
   mutabakat tamam, alan mutabakatı 95 kontrol / 0 hata, legacy'ye yazma yok.
 - Gerçek veriyle **hiç** çalıştırılmadı.
@@ -109,9 +110,8 @@ Bir çocuğun listesi her zaman sorguyla okunur, ör.
   başka bir aggregate'i değiştirmek için onun servisini çağırın. Bir işlemde (transaction) tek
   aggregate değiştirmek hedeflenmeli; istisna: kapak fotoğrafı değişimi gibi aynı aggregate içindeki
   çoklu satır güncellemeleri.
-- **Envanter silme**: çocukları olan envanter FK nedeniyle silinemez (hiçbir FK'de CASCADE yok).
-  Silme politikası henüz kararlaştırılmadı (bkz. bölüm 7, soft delete). Önerilen: envanter fiziksel
-  olarak silinmez.
+- **Silme her zaman soft delete** (bkz. 3.4). Root silindiğinde aggregate içindeki aktif çocuklar aynı
+  transaction'da servis tarafından `sil()` ile işaretlenir; fiziksel silme hiçbir katmanda mümkün değildir.
 - **EnvanterHareketi değiştirilmez.** Geçmiş kaydıdır; düzeltme yeni bir hareket olarak eklenmeli
   (öneri; kullanıcıyla doğrulanmadı).
 
@@ -123,6 +123,8 @@ Sadece FK olarak kurulan ilişkiler çizildi. `TUR` ile işaretli ilişkiler bil
 çocuk ve ebeveyn aynı türde olmak zorundadır (DEMIRBAS↔DEMIRBAS, SARF↔SARF). `_ESKI_REF`
 kolonları FK değildir, diyagramda yoktur. Göç tabloları (`MIG_*`) ve Spring Batch tabloları
 (`BATCH_*`) domain'e ait değildir, diyagramda yoktur.
+Tüm domain tablolarında ortak kolonlar diyagramda gösterilmedi: audit (`VERSIYON`, `OLUSTURMA_ZAMANI`, `OLUSTURAN`,
+`GUNCELLEME_ZAMANI`, `GUNCELLEYEN`) ve soft delete (`SILINME_ZAMANI`, `SILEN`).
 
 ```mermaid
 erDiagram
@@ -384,20 +386,65 @@ kullanıcı **"şimdilik kalsın"** dedi (bkz. bölüm 7).
   arama) salt okunur bir sorgu/view ile `MIG_KIMLIK_ESLEME`'ye bakın; domain tablolarına legacy kolon
   eklemeyin. `MIG_*` tablolarına **yazmayın**.
 
-### 3.4 Soft delete
+### 3.4 Soft delete — fiziksel silme YOK (karar 2026-11-08)
 
-**Yok ve kararlaştırılmadı** (S14: "Demirbaş kaydı fiziksel olarak siliniyor mu, soft delete isteniyor
-mu?" sorusu cevapsız). Şu an:
-- Hiçbir tabloda `SILINDI` / `AKTIF_MI` benzeri genel bir kolon yok. (`MARKA.AKTIF` ve `MODEL.AKTIF`
-  legacy sarf tablolarından gelen iş alanlarıdır, soft delete değildir.)
-- Hiçbir FK'de `ON DELETE CASCADE` yok; çocuğu olan satır silinemez (`ORA-02292`).
-- Göçle gelen satırların silinmesi `MIG_KIMLIK_ESLEME.HEDEF_ID`'yi boşa düşürür (FK yok ama mutabakat bozulur).
+Kullanıcı kararı: **her tabloda soft delete, asla hard delete.** (Bu karar S14 sorusunu kapatır.)
 
-Backend için öneri (kullanıcıyla netleştirilmeli): ana kayıtlar (Envanter, tanımlar) fiziksel
-silinmez; ya Flyway `V2` ile bir `SILINME_ZAMANI TIMESTAMP(6)` + `SILEN VARCHAR2(36 CHAR)` kolonu
-eklenir ve Hibernate `@SoftDelete` / filtre ile uygulanır, ya da "pasif" durumu iş kuralı olarak
-modellenir. Çocuk kayıtlardan aparat ve fotoğraf fiziksel silinebilir (fotoğrafta nesne deposu
-temizliği gerekir, bkz. 5.12).
+**Şema:** 19 domain tablosunun hepsinde:
+- `SILINME_ZAMANI TIMESTAMP(6)` (UTC duvar saati; NULL = silinmemiş) ve `SILEN VARCHAR2(36 CHAR)`.
+- `CK_<TABLO>_SILME`: ikisi birlikte dolu ya da birlikte boş.
+- `TRG_<TABLO>_SILME_YASAK`: statement seviyesinde `BEFORE DELETE` trigger'ı; satır etkilenmese bile her
+  `DELETE` ifadesini `ORA-20001` ile reddeder (native SQL ve elle yapılan silmeler dahil). `TRUNCATE`/`DROP`
+  DDL'dir, trigger yakalamaz; bunlar yetkiyle engellenmeli (uygulama kullanıcısına verilmez).
+- Bu yüzden şema kurulumu için hedef kullanıcıda **`CREATE TRIGGER` yetkisi** gerekir
+  (test ortamı, yerel DB ve DBA runbook'u buna göre güncellendi).
+- `MIG_*` göç tablolarında soft delete ve trigger yok (domain değiller).
+
+**Entity (`BaseEntity`, tüm entity'ler miras alır):**
+- `sil(String silen)` — UTC şimdiki zamanla işaretler; `sil(String silen, LocalDateTime zaman)` — zaman dışarıdan.
+  `silen` zorunlu, trim edilir, en fazla 36 karakter. Zaten silinmişse `IllegalStateException`.
+- `geriAl()` — işareti kaldırır; silinmemişse `IllegalStateException`.
+- `isSilindi()`, `getSilinmeZamani()`, `getSilen()`.
+- Silme/geri alma bir **güncellemedir**: `VERSIYON` artar, `GUNCELLEME_ZAMANI`/`GUNCELLEYEN` dolar (optimistic lock geçerli).
+- `@PreRemove fizikselSilmeYasak()`: `EntityManager.remove()` ve Spring Data `delete*()` çağrıları veritabanına
+  gitmeden `UnsupportedOperationException` ile reddedilir.
+- `silinmemisOlmali(hedef, alan)`: tüm ilişki setter'larında (ve aparat/fotoğraf kurucularında) çağrılır;
+  **silinmiş bir kayda yeni bağlantı kurulamaz** (`IllegalArgumentException`). Yüklenmemiş LAZY proxy'de kontrol
+  atlanır. Var olan bağlantılar korunur (silinmiş markaya bağlı eski envanterler bozulmaz).
+
+**Görünürlük (Hibernate filtresi):**
+- `BaseEntity` üzerinde `@FilterDef(name = "silinmemis", defaultCondition = "SILINME_ZAMANI IS NULL",
+  autoEnabled = true, applyToLoadByKey = false)` + `@Filter`. Sabit: `BaseEntity.SILINMEMIS_FILTRESI`.
+- **Otomatik açık:** tüm HQL/JPQL/Criteria sorguları (Spring Data repository metotları dahil) silinmiş kayıtları getirmez.
+- **ID ile yüklemeye uygulanmaz:** `find()`, `getReference()` ve LAZY `@ManyToOne` silinmiş kaydı yine yükler.
+  Böylece silinmiş bir envanterin hareket geçmişi, silinmiş markaya bağlı envanterler vb. çalışmaya devam eder.
+- Silinmişler dahil liste (çöp kutusu / denetim ekranı): oturumda filtreyi kapatın:
+  `entityManager.unwrap(Session.class).disableFilter(BaseEntity.SILINMEMIS_FILTRESI)`.
+- **Native SQL filtrelenmez**: native sorgularda `SILINME_ZAMANI IS NULL` koşulunu elle yazın
+  (migration'daki `ModelKategorisiTuretici` buna göre güncellendi).
+- Gerçek Oracle'da uçtan uca test edildi (senaryo 12): filtre, ID ile yükleme, `remove()` reddi, trigger reddi,
+  CHECK, kapak index'i ve geri alma.
+
+**Tekil kısıtlar ve soft delete:** Silinmiş satırlar tekil kısıtlarda yer kaplamaya devam eder. Bu yüzden:
+- `UX_ENVANTER_FOTOGRAFI_KAPAK` silinmiş fotoğrafları saymaz (`CASE WHEN KAPAK = 1 AND SILINME_ZAMANI IS NULL ...`).
+- `UK_ENVANTER_FOTOGRAFI_NESNE` silinmiş satırları da kapsar (nesne anahtarı her yüklemede yeni üretildiği için sorun değil).
+- Gelecekte bir iş kolonuna tekil kısıt eklenirse aynı desen kullanılmalı: fonksiyon tabanlı tekil index,
+  `CASE WHEN SILINME_ZAMANI IS NULL THEN <KOLON> END`.
+
+**Index:** `SILINME_ZAMANI` index'lenmedi (satırların büyük çoğunluğu NULL; Oracle B-tree tamamen NULL anahtarları
+tutmaz, `IS NULL` filtresine faydası olmaz). Silinmiş kayıt oranı büyürse yeniden değerlendirin.
+
+**Aggregate içinde silme (servis sorumluluğu):** Koleksiyon olmadığı için `Envanter.sil()` çocukları otomatik
+silmez. Önerilen kural: `EnvanterServisi.sil()` aynı transaction'da envanterin aktif barkod, not, aparat ve
+fotoğraflarını da `sil()` ile işaretler; hareketler (geçmiş) ve arızalar silinmez. Benzer şekilde `Ariza` →
+`ArizaIslemi`, `Sayim` → `SayimSatiri`. Tanım kayıtları (marka, model, kategori, depo, firma, ihale) silinince
+onlara bağlı eski kayıtlar korunur; yalnızca yeni bağlantı kurulamaz. Kategori silinirken alt kategorileri ne olacak
+(birlikte silinsin mi, engellensin mi) backend'de kararlaştırılmalı.
+
+**Silinmiş kaydın düzenlenmesi:** Entity bunu engellemez. Önerilen: servis katmanında silinmiş kayıt üzerinde
+`geriAl()` dışında güncelleme reddedilir.
+
+`MARKA.AKTIF` ve `MODEL.AKTIF` soft delete değildir; legacy sarf tablolarından gelen iş alanlarıdır.
 
 ### 3.5 Enum ve converter kararları
 
@@ -517,6 +564,8 @@ yok).
 | Metin | `VARCHAR2(n CHAR)` (CHAR semantiği) | |
 | İş tarihi / audit | `TIMESTAMP(0)` / `TIMESTAMP(6)` | |
 | Audit kolonları | Her tabloda: `VERSIYON`, `OLUSTURMA_ZAMANI`, `OLUSTURAN`, `GUNCELLEME_ZAMANI`, `GUNCELLEYEN` | |
+| Soft delete kolonları | Her tabloda: `SILINME_ZAMANI TIMESTAMP(6)`, `SILEN VARCHAR2(36 CHAR)` + `CK_<TABLO>_SILME` | |
+| Silme yasağı trigger'ı | `TRG_<TABLO>_SILME_YASAK` (BEFORE DELETE, ORA-20001) | `TRG_ENVANTER_SILME_YASAK` |
 | Tür ayırıcı | `TUR` | |
 
 Oracle constraint adları 128 karakteri aşmamalı; mevcut adlar kısa tutuldu (`ENV_HAREKETI` kısaltması gibi).
@@ -542,7 +591,8 @@ Oracle constraint adları 128 karakteri aşmamalı; mevcut adlar kısa tutuldu (
 | Boolean | `@Convert(converter = BooleanSayiConverter.class)` |
 | Değer nesnesi | `record` + `@Embeddable`, kolon adları `@AttributeOverride` ile |
 | Tür alanı | `updatable = false` |
-| Yasak | Lombok, `javax.*`, EAGER, `@Data`, entity'de equals/hashCode override, CascadeType.REMOVE |
+| Silme | Sadece `entity.sil(silen)`; `geriAl()` ile geri alınır. Yeni ilişki setter'larında `silinmemisOlmali(x, "x")` çağrılır. Yeni tabloda `SILINME_ZAMANI`/`SILEN` kolonları, `CK_<TABLO>_SILME` ve `TRG_<TABLO>_SILME_YASAK` eklenmeli (BaseEntity'den gelen alanlar `ddl-auto=validate` ile kontrol edilir) |
+| Yasak | Lombok, `javax.*`, EAGER, `@Data`, entity'de equals/hashCode override, CascadeType.REMOVE, `em.remove()` / repository `delete*()` (çalışma anında reddedilir), DELETE içeren native SQL |
 | Bilgi etiketleri | Javadoc'ta kanıt düzeyi: [KESİN] (DDL comment'i), [GÜÇLÜ TAHMİN], [ZAYIF TAHMİN]. ZAYIF olan hiçbir şey doğrulanmadan modele yansıtılmaz |
 | Test | JUnit 5 + AssertJ. Birim test adları Türkçe snake_case (`bir_envanterin_birden_fazla_fotografi_olabilir`). Uçtan uca testler `*EntegrasyonTesti` (failsafe), gerçek Oracle (Testcontainers) |
 | Gizli bilgi | Bağlantı bilgisi sadece ortam değişkeninden; repoda şifre yok. Yerel Docker şifreleri `yerel-db/.env` (git dışı) |
@@ -575,6 +625,12 @@ spring:
   Çözüm seçenekleri: `spring.flyway.ignore-migration-patterns: "*:missing"`; ya da backend'de Flyway'i
   kapatıp şema değişikliklerini tek bir yerden yönetmek. Bu karar backend'de verilmeli.
 - `@EnableJpaAuditing` + `AuditorAware<String>` + UTC `DateTimeProvider` (bkz. 3.6).
+- Veritabanı kullanıcısı: şema Flyway ile kurulacaksa `CREATE TRIGGER` yetkisi gerekir. Uygulamanın çalışma
+  zamanı kullanıcısına DELETE/TRUNCATE yetkisi verilmemesi önerilir (fiziksel silme zaten trigger'la yasak).
+- Spring Data: `JpaRepository.delete*()` metotları `@PreRemove` nedeniyle hata verir. Repository'lerde bunları
+  kullanmayın; isterseniz silme metotlarını gizleyen bir temel repository arayüzü tanımlayın
+  (`Repository<T, Long>` + sadece ihtiyaç duyulan metotlar). Sorgular `silinmemis` filtresi nedeniyle
+  silinmiş kayıtları otomatik gizler.
 
 ---
 
@@ -585,9 +641,12 @@ Gösterim: **NN** = NOT NULL (DB), **E** = entity'de zorlanır, **CK** = CHECK, 
 tutulmasının önerildiğini belirtir (bkz. bölüm 6).
 
 Tüm entity'lerde ortak: `ID` (PK, sequence), audit kolonları, `VERSIYON` (optimistic lock;
-eşzamanlı güncellemede `OptimisticLockException`). **Hiçbir FK'de CASCADE yok**: çocuğu olan satır
-silinemez. **Hiçbir iş kolonunda (DEMIRBAS_NO, SERI_NO, BARKOD dahil) UNIQUE yok**, istisnalar
-belirtilmiştir.
+eşzamanlı güncellemede `OptimisticLockException`), soft delete (`SILINME_ZAMANI`, `SILEN`; `sil()` / `geriAl()`).
+**Silme davranışı her entity için aynıdır: yalnızca soft delete; fiziksel silme JPA'da ve veritabanında
+reddedilir; silinmiş kayda yeni ilişki kurulamaz; silinmiş kayıtlar sorgulardan gizlenir ama ID ile
+yüklenebilir** (bkz. 3.4). Aşağıda yalnızca aggregate içindeki silme sırası gibi farklar belirtilmiştir.
+**Hiçbir FK'de CASCADE yok. Hiçbir iş kolonunda (DEMIRBAS_NO, SERI_NO, BARKOD dahil) UNIQUE yok**,
+istisnalar belirtilmiştir.
 
 ### 5.1 Depo (`DEPO`)
 - Zorunlu: `AD` (50, NN, E). Kurucu: `new Depo(ad)`.
@@ -704,10 +763,12 @@ belirtilmiştir.
 - Backend servis sorumlulukları:
   1. Yükleme: içerik türünü dosyanın kendisinden doğrula (uzantıya güvenme), boyut sınırı uygula, SHA-256 hesapla,
      anahtarı sunucu üret (kullanıcı adından türetme), **önce nesneyi yükle, sonra satırı yaz**; satır yazılamazsa nesneyi sil.
-  2. Silme: **önce satırı sil (commit), sonra nesneyi sil**; nesne silinemezse periyodik temizlik toplar.
+  2. Silme: satır **soft delete** edilir (`sil()`); nesne depoda **kalır** (kayıt geri alınabilsin diye).
+     Silinmiş fotoğraf nesnelerinin depodan kalıcı temizliği (saklama süresi, KVKK) bir politika kararıdır, açık.
   3. Kapak değiştirme: eski kapağı `false`, yenisini `true` yap — **tek transaction**, önce eskiyi kapat
      (aksi halde tekil index ihlali; Hibernate update sırasına dikkat: eskiyi güncelleyip `flush()` sonra yeniyi).
-  4. Sahipsiz nesne temizliği: depodaki anahtarlar ile tablodaki anahtarlar periyodik karşılaştırılır.
+  4. Sahipsiz nesne temizliği: depoda olup tabloda hiç satırı olmayan anahtarlar (yükleme yarıda kaldıysa)
+     periyodik karşılaştırmayla temizlenir. Soft delete edilmiş satırın nesnesi sahipsiz sayılmaz.
   5. Aynı SHA-256 aynı envanterde zaten varsa uyarı/ret (öneri).
 
 ### 5.13 CokluZimmet (`COKLU_ZIMMET`)
@@ -857,7 +918,7 @@ ama süreç olarak tek seferlik geçiş varsayıldı, S7).
 | S7 | Geçiş tek seferlik mi, paralel çalışma var mı? | Göç tek seferlik varsayıldı; delta yok |
 | S8 | `DEMIRBAS_NO` tekil mi? | Unique konmadı |
 | S12 | Zimmet modeli: tek kişi (`ZIMMETLI_SICIL`) mi, çok kişi (`COKLU_ZIMMET`) mi? `ZSNO` ne? | Zimmet backend'de tasarlanmadan önce netleşmeli |
-| S14 | Fiziksel silme mi, soft delete mi? | Bkz. 3.4 |
+| S14 | ~~Fiziksel silme mi, soft delete mi?~~ | **Kapandı (2026-11-08): her yerde soft delete**, bkz. 3.4 |
 | S29 | İhale komisyonu hep 3 kişi mi; isim mi sicil mi? | Embeddable 3 sabit metin alanı |
 | S30 | `R_SQL_KAYIT` (SQL_KAYDI) nedir? | Bkz. 5.17 |
 | Ç6 | `R_SARFDEMIRBAS.TUR` (→ `YON_KODU`) gerçek değerleri; çıkışta ADET negatif mi? | Sarf stoğu hesaplanamıyor |
@@ -878,7 +939,9 @@ alanlar ya ham bırakılmalı ya da yeni sistem için **yeni** kurallar tanımla
    gerekiyor; çıkan tanınmayan kodlar yml'ye eklenecek, gerekirse şema değişebilir (ör. kolon uzunluğu).
 2. **Stok yok.** Sarf için mevcut miktar tutulmuyor ve hesaplanamıyor (Ç6).
 3. **Personel/kullanıcı modeli yok** (S2). Kimlik doğrulama, yetki ve zimmet atama için gerekli.
-4. **Soft delete yok** (S14).
+4. **Soft delete'in aggregate içi zincirleme kuralları** (envanter silinince barkod/not/aparat/fotoğraf; kategori
+   silinince alt kategoriler) servis katmanında yazılmadı; silinmiş fotoğraf nesnelerinin depodan kalıcı temizlik
+   politikası belirlenmedi.
 5. **Tür ayrımı Java'da çalışma anında** (tek `Envanter` sınıfı; bkz. 3.2). SINGLE_TABLE kalıtımı ertelendi.
 6. **Kategori ağacında dolaylı döngü kontrolü yok** (sadece kendini üst yapma engelli).
 7. **İş kolonlarında unique yok** (DEMIRBAS_NO, SERI_NO, BARKOD); yeni kayıtlarda servis kontrol etmeli.
@@ -906,7 +969,8 @@ alanlar ya ham bırakılmalı ya da yeni sistem için **yeni** kurallar tanımla
 7. **Kapak fotoğrafı ve sıralama** servis metotları (5.12).
 8. **SINGLE_TABLE kalıtımı** (Demirbas/Sarf, DemirbasHareketi/SarfHareketi, YerelSayimSatiri/GenelSayimSatiri):
    tablo değişmez, Java tip güvenliği artar. Backend yazılmaya başlamadan yapılırsa en ucuzu (kullanıcı ertelendi dedi).
-9. **Soft delete kararı** ve gerekiyorsa Flyway V2.
+9. **Soft delete servisleri**: aggregate içi zincirleme silme/geri alma, "silinmişler" (çöp kutusu) ekranı
+   (filtre kapatılarak), silinmiş kaydın düzenlenmesini reddetme.
 10. **Personel modeli** (S2 cevabına göre).
 11. **Veri kalitesi ekranı**: `MIG_SORUN` üzerinden RED/UYARI listesi (bozuk karakter, kopuk referans, 1899 tarihleri).
 12. **Testler**: domain'deki gibi gerçek Oracle (Testcontainers `gvenzl/oracle-free:23-slim-faststart`) ile repository/
@@ -915,6 +979,8 @@ alanlar ya ham bırakılmalı ya da yeni sistem için **yeni** kurallar tanımla
 ### 7.4 Yapılmaması gerekenler
 
 - Legacy `DEPO` şemasına hiçbir koşulda yazmak (backend legacy'ye bağlanmamalı).
+- Domain tablolarında fiziksel silme (`em.remove()`, repository `delete*()`, native `DELETE`): hepsi reddedilir;
+  trigger'ları kapatmak ya da kaldırmak yasak kararın ihlalidir.
 - `V1__domain_semasi.sql`'i canlıya kurulduktan sonra değiştirmek.
 - `MIG_*` tablolarına yazmak ya da silmek.
 - Göçle gelen kayıtları toplu silmek / ID'lerini değiştirmek.

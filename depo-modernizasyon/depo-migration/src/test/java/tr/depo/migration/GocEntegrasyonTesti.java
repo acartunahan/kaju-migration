@@ -17,6 +17,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import org.hibernate.Session;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.MethodOrderer;
@@ -34,6 +35,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -43,6 +45,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import tr.depo.domain.envanter.Envanter;
 import tr.depo.domain.envanter.EnvanterAparati;
 import tr.depo.domain.envanter.EnvanterFotografi;
+import tr.depo.domain.ortak.BaseEntity;
+import tr.depo.domain.tanim.Marka;
 import tr.depo.migration.ayar.GocAyarlari;
 import tr.depo.migration.cekirdek.GocDeposu;
 import tr.depo.migration.cekirdek.TabloGocu;
@@ -68,6 +72,7 @@ import tr.depo.migration.test.OracleTestOrtami;
  *   <li>Yetki kontrolü: şema sahibiyle açılan legacy bağlantısı reddedilir</li>
  *   <li>ENVANTER_APARATI: bir demirbaşa birden fazla aparat; demirbaşsız ve adedi 0 olan aparat reddedilir</li>
  *   <li>ENVANTER_FOTOGRAFI: bir envantere birden fazla fotoğraf, tek kapak, tekil nesne anahtarı</li>
+ *   <li>Soft delete: sil/geriAl, sorgu filtresi, fiziksel silme JPA ve trigger ile reddedilir</li>
  * </ol>
  *
  * Test verisi: src/test/resources/legacy/legacy_veri.sql (44 satır: 1'i R_APARAT, bilinçli taşınmaz;
@@ -676,12 +681,87 @@ class GocEntegrasyonTesti {
     // ------------------------------------------------------------------------------ 12
 
     /**
+     * Soft delete: sil() kaydı işaretler; silinmiş kayıt sorgulardan (Hibernate filtresi) gizlenir ama ID ile
+     * yüklenebilir; fiziksel silme JPA'da ve veritabanında (trigger) reddedilir; SILINME_ZAMANI/SILEN tutarlılığı
+     * CHECK ile korunur; silinmiş kapak fotoğrafı yeni kapak seçimini engellemez. Sonunda geri alır.
+     */
+    @Test
+    @Order(12)
+    void soft_delete_fiziksel_silme_yok() {
+        TransactionTemplate islem = new TransactionTemplate(islemYoneticisi);
+        String demirbasMarkasi = "SELECT COUNT(m) FROM Marka m WHERE m.tur = tr.depo.domain.tanim.MalzemeTuru.DEMIRBAS";
+        long markaId = say("SELECT ID FROM MARKA WHERE TUR = 'DEMIRBAS' AND AD = 'Marka2'");
+        assertThat(islem.<Long>execute(d -> em.createQuery(demirbasMarkasi, Long.class).getSingleResult())).isEqualTo(2L);
+
+        islem.executeWithoutResult(d -> em.find(Marka.class, markaId).sil("TEST"));
+
+        // Veritabanında satır duruyor, işaretli
+        Map<String, Object> satir = hedef().queryForMap("SELECT SILINME_ZAMANI, SILEN, VERSIYON FROM MARKA WHERE ID = ?", markaId);
+        assertThat(satir.get("SILINME_ZAMANI")).isNotNull();
+        assertThat(satir).containsEntry("SILEN", "TEST");
+        assertThat(((Number) satir.get("VERSIYON")).intValue()).isEqualTo(1);
+        assertThat(say("SELECT COUNT(*) FROM MARKA WHERE TUR = 'DEMIRBAS'")).isEqualTo(2);
+
+        // Sorgular silinmişi gizler; ID ile yükleme ve filtre kapalıyken görünür
+        assertThat(islem.<Long>execute(d -> em.createQuery(demirbasMarkasi, Long.class).getSingleResult())).isEqualTo(1L);
+        assertThat(islem.<Boolean>execute(d -> em.find(Marka.class, markaId).isSilindi())).isTrue();
+        assertThat(islem.<Long>execute(d -> {
+            em.unwrap(Session.class).disableFilter(BaseEntity.SILINMEMIS_FILTRESI);
+            return em.createQuery(demirbasMarkasi, Long.class).getSingleResult();
+        })).isEqualTo(2L);
+        // Silinmiş markaya bağlı envanter, markasını yine yükleyebilir (geçmiş bozulmaz)
+        assertThat(islem.<String>execute(d -> em.createQuery(
+                "SELECT e FROM Envanter e WHERE e.marka.id = :id", Envanter.class)
+            .setParameter("id", markaId).getResultList().getFirst().getMarka().getAd())).isEqualTo("Marka2");
+
+        // Fiziksel silme: JPA reddeder
+        assertThatThrownBy(() -> islem.executeWithoutResult(d -> em.remove(em.find(Marka.class, markaId))))
+            .hasStackTraceContaining("Fiziksel silme yasak");
+        // Fiziksel silme: veritabanı reddeder (native SQL, satır etkilenmese bile)
+        assertThatThrownBy(() -> hedef().update("DELETE FROM MARKA WHERE ID = ?", markaId))
+            .isInstanceOf(DataAccessException.class).hasMessageContaining("ORA-20001");
+        assertThatThrownBy(() -> hedef().update("DELETE FROM ENVANTER WHERE 1 = 0"))
+            .isInstanceOf(DataAccessException.class).hasMessageContaining("ORA-20001");
+        assertThat(say("SELECT COUNT(*) FROM USER_TRIGGERS WHERE TRIGGER_NAME LIKE 'TRG\\_%\\_SILME\\_YASAK' ESCAPE '\\' "
+            + "AND STATUS = 'ENABLED'")).isEqualTo(19);
+        // SILINME_ZAMANI ve SILEN birlikte
+        assertThatThrownBy(() -> hedef().update("UPDATE DEPO SET SILINME_ZAMANI = SYSTIMESTAMP WHERE ROWNUM = 1"))
+            .isInstanceOf(DataIntegrityViolationException.class).hasMessageContaining("CK_DEPO_SILME");
+
+        // Silinmiş kapak fotoğrafı yeni kapağı engellemez
+        long envanterId = say("SELECT ENVANTER_ID FROM ENVANTER_FOTOGRAFI WHERE NESNE_ANAHTARI = 'envanter/test/on.jpg'");
+        islem.executeWithoutResult(d -> em.createQuery(
+                "SELECT f FROM EnvanterFotografi f WHERE f.nesneAnahtari = 'envanter/test/on.jpg'", EnvanterFotografi.class)
+            .getSingleResult().sil("TEST"));
+        islem.executeWithoutResult(d -> {
+            EnvanterFotografi yeniKapak = new EnvanterFotografi(em.find(Envanter.class, envanterId),
+                "envanter/test/yeni-kapak.jpg", "yeni.jpg", "image/jpeg", 10, "d".repeat(64));
+            yeniKapak.setKapak(true);
+            em.persist(yeniKapak);
+        });
+        assertThat(say("SELECT COUNT(*) FROM ENVANTER_FOTOGRAFI WHERE ENVANTER_ID = ? AND KAPAK = 1", envanterId)).isEqualTo(2);
+        assertThat(say("SELECT COUNT(*) FROM ENVANTER_FOTOGRAFI WHERE ENVANTER_ID = ? AND KAPAK = 1 "
+            + "AND SILINME_ZAMANI IS NULL", envanterId)).isEqualTo(1);
+
+        // Silinmiş kayda yeni bağlantı kurulamaz; geri alınca kurulabilir
+        assertThatThrownBy(() -> islem.executeWithoutResult(d -> em.find(Envanter.class, envanterId)
+                .setMarka(em.find(Marka.class, markaId))))
+            .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("silinmiş");
+        islem.executeWithoutResult(d -> em.find(Marka.class, markaId).geriAl());
+        assertThat(say("SELECT COUNT(*) FROM MARKA WHERE ID = ? AND SILINME_ZAMANI IS NULL AND SILEN IS NULL", markaId))
+            .isEqualTo(1);
+        assertThat(islem.<Long>execute(d -> em.createQuery(demirbasMarkasi, Long.class).getSingleResult())).isEqualTo(2L);
+    }
+
+    // ------------------------------------------------------------------------------ 13
+
+    /**
      * Türetme kuralının çelişki dalı: modelin demirbaşları iki farklı kategorideyse model kategorisi
      * seçilmez, boş kalır ve KATEGORI_BELIRSIZ (HAM_DEGER = 2) yazılır. Ayrıca dolu kategori ezilmez.
      * Son senaryo: hedef veriyi değiştirir.
      */
     @Test
-    @Order(12)
+    @Order(13)
     void celiskili_demirbas_kategorilerinde_model_kategorisi_secilmez() {
         long model1 = say("SELECT ID FROM MODEL WHERE TUR = 'DEMIRBAS' AND AD = 'Model1'");
         long alt = say("SELECT ID FROM KATEGORI WHERE AD = 'Alt'");

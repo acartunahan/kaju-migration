@@ -139,6 +139,7 @@ public class Ihale extends BaseEntity {
 
     /** Sadece DEMIRBAS türünde firma (veritabanında bileşik FK ile de zorlanır). */
     public void setFirma(Firma firma) {
+        silinmemisOlmali(firma, "firma");
         MalzemeTuru.tanimDogrula(MalzemeTuru.DEMIRBAS, firma);
         this.firma = firma;
     }

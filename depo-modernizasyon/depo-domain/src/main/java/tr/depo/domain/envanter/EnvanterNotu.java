@@ -63,6 +63,7 @@ public class EnvanterNotu extends BaseEntity {
     }
 
     public void setEnvanter(Envanter envanter) {
+        silinmemisOlmali(envanter, "envanter");
         this.envanter = envanter;
     }
 

@@ -93,6 +93,7 @@ public class ArizaIslemi extends BaseEntity {
     }
 
     public void setAriza(Ariza ariza) {
+        silinmemisOlmali(ariza, "ariza");
         this.ariza = ariza;
     }
 

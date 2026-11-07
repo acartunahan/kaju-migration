@@ -96,6 +96,7 @@ public class Ariza extends BaseEntity {
     }
 
     public void setDepo(Depo depo) {
+        silinmemisOlmali(depo, "depo");
         this.depo = depo;
     }
 
@@ -104,6 +105,7 @@ public class Ariza extends BaseEntity {
     }
 
     public void setEnvanter(Envanter envanter) {
+        silinmemisOlmali(envanter, "envanter");
         this.envanter = envanter;
     }
 

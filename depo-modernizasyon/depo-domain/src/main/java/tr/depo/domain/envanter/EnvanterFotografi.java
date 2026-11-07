@@ -102,6 +102,7 @@ public class EnvanterFotografi extends BaseEntity {
      */
     public EnvanterFotografi(Envanter envanter, String nesneAnahtari, String dosyaAdi, String icerikTuru,
                              long boyut, String sha256) {
+        silinmemisOlmali(Objects.requireNonNull(envanter, "envanter"), "envanter");
         this.envanter = Objects.requireNonNull(envanter, "envanter");
         this.nesneAnahtari = zorunluMetin(nesneAnahtari, "nesneAnahtari");
         setDosyaAdi(dosyaAdi);

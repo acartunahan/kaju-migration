@@ -112,6 +112,7 @@ public class Model extends BaseEntity {
     }
 
     public void setMarka(Marka marka) {
+        silinmemisOlmali(marka, "marka");
         if (tur == MalzemeTuru.SARF) {
             Objects.requireNonNull(marka, "Sarf modelinde marka zorunlu");
         }
@@ -125,6 +126,7 @@ public class Model extends BaseEntity {
 
     /** Kategori modelle aynı türde olmalı (veritabanında bileşik FK ile de zorlanır). */
     public void setKategori(Kategori kategori) {
+        silinmemisOlmali(kategori, "kategori");
         MalzemeTuru.tanimDogrula(tur, kategori);
         this.kategori = kategori;
     }
@@ -177,6 +179,7 @@ public class Model extends BaseEntity {
     }
 
     public void setDepo(Depo depo) {
+        silinmemisOlmali(depo, "depo");
         this.depo = depo;
     }
 }

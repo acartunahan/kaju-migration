@@ -94,7 +94,7 @@ Tüm DEPO tablolarına SELECT verilmesinin sebebi şu: Kapsam dışı tablolar `
 
 **Ön koşullar:**
 - Hedef şema boş olmalı.
-- Hedef kullanıcısı tablo, sequence ve index oluşturabilmeli.
+- Hedef kullanıcısı tablo, sequence, index ve **trigger** oluşturabilmeli (`GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE VIEW, CREATE TRIGGER`). Trigger'lar fiziksel silme yasağı içindir (soft delete, 2026-11-08). Kurulumdan sonra uygulama kullanıcısına DELETE ve TRUNCATE yetkisi verilmemesi önerilir.
 - Hedef DB karakter seti AL32UTF8 olmalı.
 - Legacy tablolar migration süresince taşınmamalı (`ALTER TABLE MOVE`, export/import yok). Satır kimliği ROWID'dir; tablo taşınırsa değişir (K4).
 

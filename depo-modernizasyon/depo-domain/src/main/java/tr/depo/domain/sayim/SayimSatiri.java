@@ -133,6 +133,7 @@ public class SayimSatiri extends BaseEntity {
     }
 
     public void setSayim(Sayim sayim) {
+        silinmemisOlmali(sayim, "sayim");
         this.sayim = sayim;
     }
 
@@ -142,6 +143,7 @@ public class SayimSatiri extends BaseEntity {
 
     /** Yerel sayımda envantere sadece ZIMMET satırları bağlanır (Ç8; DB: CK_SAYIM_SATIRI_ENVANTER). */
     public void setEnvanter(Envanter envanter) {
+        silinmemisOlmali(envanter, "envanter");
         if (envanter != null && yerelMi() && malzemeTuru != YerelSayimTuru.ZIMMET) {
             throw new IllegalArgumentException("Yerel sayımda envantere sadece ZIMMET satırı bağlanabilir");
         }
@@ -200,6 +202,7 @@ public class SayimSatiri extends BaseEntity {
     }
 
     public void setDepo(Depo depo) {
+        silinmemisOlmali(depo, "depo");
         this.depo = depo;
     }
 

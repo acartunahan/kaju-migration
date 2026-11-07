@@ -71,6 +71,7 @@ public class EnvanterAparati extends BaseEntity {
     }
 
     public void setEnvanter(Envanter envanter) {
+        silinmemisOlmali(envanter, "envanter");
         this.envanter = Objects.requireNonNull(envanter, "envanter");
     }
 
