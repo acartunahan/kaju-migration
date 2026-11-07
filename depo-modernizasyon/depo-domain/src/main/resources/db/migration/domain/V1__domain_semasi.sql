@@ -522,7 +522,7 @@ CREATE TABLE SQL_KAYDI (
 
 
 -- =====================================================================================
--- FOREIGN KEY'LER (30 adet; hiçbirinde CASCADE yok)
+-- FOREIGN KEY'LER (29 adet; hiçbirinde CASCADE yok)
 -- =====================================================================================
 
 ALTER TABLE MARKA                 ADD CONSTRAINT FK_MARKA_DEPO                FOREIGN KEY (DEPO_ID)          REFERENCES DEPO (ID);
@@ -563,7 +563,8 @@ ALTER TABLE ZIMMET_KAYDI          ADD CONSTRAINT FK_ZIMMET_KAYDI_DEPO         FO
 -- =====================================================================================
 -- INDEX'LER
 -- FK kolonları + legacy'de index'i olan arama kolonları (SERI_NO, BARKOD).
--- Hiçbiri UNIQUE değil: legacy veride tekillik doğrulanamadı.
+-- İş kolonlarında (SERI_NO, BARKOD, DEMIRBAS_NO) UNIQUE yok: legacy veride tekillik doğrulanamadı.
+-- Tekil olanlar yalnızca yeni tablolarda: UK_ENVANTER_FOTOGRAFI_NESNE, UX_ENVANTER_FOTOGRAFI_KAPAK.
 -- =====================================================================================
 
 CREATE INDEX IX_MARKA_DEPO               ON MARKA (DEPO_ID);

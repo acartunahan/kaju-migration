@@ -11,6 +11,10 @@ platformuna taşınması: yeni domain modeli + legacy'den yeni şemaya tek sefer
 | Test | JUnit 5, Testcontainers (gerçek Oracle Free 23) |
 | Build | Maven (çok modüllü) |
 
+## Devralacaklar için
+
+Bu domain modülünü kullanacak backend projesine geçecekseniz önce [HANDOFF.md](HANDOFF.md) dokümanını okuyun: aggregate sınırları, ER diyagramı, tasarım kararları, kod standartları, entity bazında iş kuralları, göçte tespit edilen veri özellikleri ve açık konular.
+
 ## Yapı
 
 ```
