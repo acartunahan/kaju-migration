@@ -33,7 +33,7 @@ Bu domain modülünü kullanacak backend projesine geçecekseniz önce [HANDOFF.
     └── testleri-calistir.ps1    Windows için test betiği
 ```
 
-Hedef şema 19 tablodur. Demirbaş ve sarf malzemesi `ENVANTER`'de (fotoğrafları `ENVANTER_FOTOGRAFI`'nda, dosyalar S3 uyumlu nesne deposunda), hareketleri
+Hedef şema 20 tablodur. Demirbaş ve sarf malzemesi `ENVANTER`'de (fotoğrafları `ENVANTER_FOTOGRAFI`'nda, dosyalar S3 uyumlu nesne deposunda; demirbaşın zimmet geçmişi `ZIMMET_GECMISI`'nde), hareketleri
 `ENVANTER_HAREKETI`'nde; kategori, marka, model ve firma ortak tablolarda; yerel ve genel sayım
 satırları `SAYIM_SATIRI`'nda tutulur. Tüm bu ayrımlar `TUR` kolonu ve bileşik FK / CHECK
 kısıtlarıyla veritabanında korunur. Ayrıntı: [asama2_domain_tasarim.md](asama2_domain_tasarim.md).

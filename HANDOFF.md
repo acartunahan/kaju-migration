@@ -46,7 +46,7 @@ Bu sürümler gerçek jar'lara karşı derlenip testleri koşturularak doğrulan
 | Testcontainers | 2.0.5 (`testcontainers-oracle-free`), imaj `gvenzl/oracle-free:23-slim-faststart` |
 | Maven | 3.9.x |
 
-Maven koordinatları: `groupId = tr.depo`, `artifactId = depo-domain`, `version = 0.1.0`
+Maven koordinatları: `groupId = tr.depo`, `artifactId = depo-domain`, `version = 0.2.0`
 (GitHub Packages: `https://maven.pkg.github.com/acartunahan/kaju-migration`; `domain-v<sürüm>` etiketiyle
 `.github/workflows/domain-yayinla.yml` yayımlar. Yerelde: `mvn -B -pl depo-domain -am install`)
 (parent: `depo-modernizasyon`). `depo-domain` bağımlılıkları: `hibernate-core`, `spring-data-jpa`
@@ -54,9 +54,9 @@ Maven koordinatları: `groupId = tr.depo`, `artifactId = depo-domain`, `version 
 
 ### 0.3 Mevcut durum (2026-11-08)
 
-- Hedef şema **19 tablo**, Flyway `V1` tek script (henüz canlıya kurulmadı, bu yüzden değişiklikler
-  doğrudan V1'e işlendi; **canlıya kurulduktan sonra V1 asla değiştirilmez**, yeni değişiklik `V2`, `V3`…).
-- Testler: 48 domain birim testi, 24 migration birim testi, 13 uçtan uca senaryo (gerçek Oracle,
+- Hedef şema **20 tablo**: Flyway `V1` (19 tablo) + `V2` (`ZIMMET_GECMISI`, 2026-11-08). **V1 ve V2 bundan
+  sonra asla değiştirilmez**; yeni değişiklik `V3`, `V4`… olarak eklenir.
+- Testler: 52 domain birim testi, 24 migration birim testi, 13 uçtan uca senaryo (gerçek Oracle,
   Testcontainers). GitHub Actions CI her push'ta `mvn verify` çalıştırır ve yeşil.
 - Tüm tablolarda soft delete; fiziksel silme yasak (bkz. 3.4).
 - Göç, gerçekçi mock legacy veriyle (27 tablo, 1.741 satır) yerelde çalıştırıldı: tüm tablolarda
@@ -282,7 +282,7 @@ erDiagram
     }
 ```
 
-### 2.1 Tablo listesi (19)
+### 2.1 Tablo listesi (20)
 
 | # | Tablo | Entity | Legacy kaynağı |
 |---|---|---|---|
@@ -305,6 +305,7 @@ erDiagram
 | 17 | SAYIM_SATIRI | `sayim.SayimSatiri` | R_SAYIM_YEREL (YEREL) + R_SAYIM_GENEL (GENEL) |
 | 18 | ZIMMET_KAYDI | `envanter.ZimmetKaydi` | SARF_LOG |
 | 19 | SQL_KAYDI | `sistem.SqlKaydi` | R_SQL_KAYIT |
+| 20 | ZIMMET_GECMISI | `envanter.ZimmetGecmisi` | Yok (yeni, V2). Migration başlangıç kaydını ENVANTER.ZIMMETLI_SICIL'den türetir |
 
 Hedef tablosu olmayan legacy tablolar: `R_IADE_HAVUZU` ve `R_ARIZA_DEGERLENDIRME` **yalnızca
 arşivlenir** (ham JSON olarak `MIG_HAM_VERI`'de, `HEDEF_TABLO = 'ARSIV'`); `R_APARAT` **taşınmaz ve
@@ -392,7 +393,7 @@ kullanıcı **"şimdilik kalsın"** dedi (bkz. bölüm 7).
 
 Kullanıcı kararı: **her tabloda soft delete, asla hard delete.** (Bu karar S14 sorusunu kapatır.)
 
-**Şema:** 19 domain tablosunun hepsinde:
+**Şema:** 20 domain tablosunun hepsinde:
 - `SILINME_ZAMANI TIMESTAMP(6)` (UTC duvar saati; NULL = silinmemiş) ve `SILEN VARCHAR2(36 CHAR)`.
 - `CK_<TABLO>_SILME`: ikisi birlikte dolu ya da birlikte boş.
 - `TRG_<TABLO>_SILME_YASAK`: statement seviyesinde `BEFORE DELETE` trigger'ı; satır etkilenmese bile her
@@ -812,6 +813,21 @@ istisnalar belirtilmiştir.
 - Ne olduğu kesin değil (kaydedilmiş rapor sorguları mı, log mu? S30). Kullanıcıya SQL çalıştırma özelliği
   olarak açılması **güvenlik riski**dir; netleşmeden backend'e alınmaması önerilir.
 
+### 5.18 ZimmetGecmisi (`ZIMMET_GECMISI`) — yeni tablo (V2)
+- Demirbaşın zimmetli sicilindeki (`ENVANTER.ZIMMETLI_SICIL`) her değişikliğin değişmez (append-only) kaydı.
+  Yalnızca demirbaş: bileşik FK `(ENVANTER_ID, TUR) -> ENVANTER(ID, TUR)`, `TUR = 'DEMIRBAS'` (`CK_ZIMMET_GECMISI_TUR`).
+- Fabrikalar: `ZimmetGecmisi.degisiklik(envanter, oncekiSicil, yeniSicil, zaman)` (ilk zimmette önceki, zimmet
+  kaldırılınca yeni sicil boş; ikisi aynıysa ya da ikisi de boşsa E) ve
+  `ZimmetGecmisi.migrationBaslangici(envanter, sicil, zaman)`. Setter yok.
+- `ONCEKI_SICIL` / `YENI_SICIL` (7, ENVANTER.ZIMMETLI_SICIL ile aynı), `DEGISIM_ZAMANI` (NN),
+  `KAYNAK` (`ZimmetGecmisiKaynagi`: `MIGRATION_BASLANGICI`, `DEGISIKLIK`; NN). Kısıtlar: `CK_ZIMMET_GECMISI_DEGISIM`
+  (en az biri dolu, ikisi farklı), `CK_ZIMMET_GECMISI_BASLANGIC` (başlangıçta önceki boş, yeni dolu).
+- Migration: `TURET:ZIMMET_BASLANGICI` adımı (`ZimmetBaslangiciTuretici`, `R_DEMIRBAS`'tan sonra) zimmetli sicili
+  dolu her silinmemiş demirbaş için bir `MIGRATION_BASLANGICI` satırı yazar (önceki boş, zaman = migration anı;
+  legacy'de zimmet geçmişi olmadığı için gerçek zimmet tarihi bilinmez). KURU modda çalışmaz; tekrar çalışmada
+  geçmişi olan demirbaşa dokunmaz.
+- Backend: zimmetli sicil değiştiğinde (oluşturma ve güncelleme) aynı transaction'da `DEGISIKLIK` satırı yazar.
+
 ---
 
 ## 6. Migration sırasında tespit edilen veri özellikleri
@@ -1019,6 +1035,6 @@ Backend projesinde bağımlılık:
 <dependency>
     <groupId>tr.depo</groupId>
     <artifactId>depo-domain</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
 </dependency>
 ```

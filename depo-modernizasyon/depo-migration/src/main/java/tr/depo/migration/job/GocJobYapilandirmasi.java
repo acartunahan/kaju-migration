@@ -47,8 +47,10 @@ public class GocJobYapilandirmasi {
     /** Ağaç tablolarının ikinci geçiş adımları için yer tutucu önek. */
     private static final String UST = "UST:";
 
-    /** Hedef veriden türetme adımı (legacy tablo okumaz). */
-    private static final String MODEL_KATEGORISI = "TURET:MODEL_KATEGORISI";
+    /** Hedef veriden türetme adımları için önek (legacy tablo okumaz). */
+    private static final String TURET = "TURET:";
+    private static final String MODEL_KATEGORISI = TURET + "MODEL_KATEGORISI";
+    private static final String ZIMMET_BASLANGICI = TURET + "ZIMMET_BASLANGICI";
 
     /**
      * Topolojik sıra. Her tablo, referans verdiği tablolardan sonra gelir.
@@ -70,6 +72,7 @@ public class GocJobYapilandirmasi {
         "R_TUKETIMCINSLERI",
         "R_DEMIRBAS",
         MODEL_KATEGORISI,
+        ZIMMET_BASLANGICI,
         "R_BARKOD",
         "R_DEMIRBAS_ACIKLAMA",
         "R_HAREKET",
@@ -102,7 +105,8 @@ public class GocJobYapilandirmasi {
                                @Qualifier("transactionManager") PlatformTransactionManager islemYoneticisi,
                                List<TabloGocu<?>> goclar, LegacyKaynak legacy, GocServisleri servisler,
                                GocAyarlari ayarlar, GocJobDinleyicisi dinleyici,
-                               ModelKategorisiTuretici modelKategorisi, CalismaBaglami calisma) {
+                               ModelKategorisiTuretici modelKategorisi, ZimmetBaslangiciTuretici zimmetBaslangici,
+                               CalismaBaglami calisma) {
         Map<String, TabloGocu<?>> tabloyaGore = goclar.stream()
             .collect(Collectors.toMap(TabloGocu::kaynakTablo, Function.identity()));
         Map<String, UstBaglanti> ustBaglantilari = UST_BAGLANTILARI.stream()
@@ -112,6 +116,8 @@ public class GocJobYapilandirmasi {
         for (String girdi : SIRA) {
             if (girdi.equals(MODEL_KATEGORISI)) {
                 adimlar.add(modelKategorisiAdimi(modelKategorisi, calisma, jobRepository, islemYoneticisi));
+            } else if (girdi.equals(ZIMMET_BASLANGICI)) {
+                adimlar.add(zimmetBaslangiciAdimi(zimmetBaslangici, calisma, jobRepository, islemYoneticisi));
             } else if (girdi.startsWith(UST)) {
                 UstBaglanti ust = ustBaglantilari.get(girdi.substring(UST.length()));
                 adimlar.add(ustBaglantiAdimi(ust, jobRepository, islemYoneticisi, legacy, servisler, ayarlar));
@@ -123,7 +129,7 @@ public class GocJobYapilandirmasi {
                 adimlar.add(tabloAdimi(goc, jobRepository, islemYoneticisi, legacy, servisler, ayarlar));
             }
         }
-        if (tabloyaGore.size() != SIRA.stream().filter(s -> !s.startsWith(UST) && !s.equals(MODEL_KATEGORISI)).count()) {
+        if (tabloyaGore.size() != SIRA.stream().filter(GocJobYapilandirmasi::tabloAdimiMi).count()) {
             throw new IllegalStateException("Dönüşüm bean'leri ile taşıma sırası uyuşmuyor: " + tabloyaGore.keySet());
         }
 
@@ -173,9 +179,31 @@ public class GocJobYapilandirmasi {
             .build();
     }
 
+    /**
+     * Demirbaşlar aktarıldıktan sonra: zimmet geçmişinin başlangıç kaydını yazar (bkz.
+     * {@link ZimmetBaslangiciTuretici}). KURU modda hedefte veri olmadığı için atlanır. Tek transaction; restart'ta
+     * yeniden çalışırsa geçmişi olan demirbaşlara dokunmaz.
+     */
+    private static Step zimmetBaslangiciAdimi(ZimmetBaslangiciTuretici turetici, CalismaBaglami calisma,
+                                              JobRepository jobRepository, PlatformTransactionManager tm) {
+        return new StepBuilder("turet-zimmet-baslangici", jobRepository)
+            .tasklet((katki, baglam) -> {
+                if (!calisma.kuru()) {
+                    turetici.turet();
+                }
+                return RepeatStatus.FINISHED;
+            }, tm)
+            .build();
+    }
+
+    /** Legacy tablosu okuyan adım mı (üst bağlantı ve türetme adımları değil)? */
+    private static boolean tabloAdimiMi(String girdi) {
+        return !girdi.startsWith(UST) && !girdi.startsWith(TURET);
+    }
+
     private static List<TabloGocu<?>> siraliGoclar(List<TabloGocu<?>> goclar) {
         Map<String, TabloGocu<?>> tabloyaGore = goclar.stream()
             .collect(Collectors.toMap(TabloGocu::kaynakTablo, Function.identity()));
-        return SIRA.stream().filter(s -> !s.startsWith(UST) && !s.equals(MODEL_KATEGORISI)).map(tabloyaGore::get).toList();
+        return SIRA.stream().filter(GocJobYapilandirmasi::tabloAdimiMi).map(tabloyaGore::get).toList();
     }
 }

@@ -111,6 +111,7 @@ class GocEntegrasyonTesti {
         BEKLENEN_HEDEF_SAYILARI.put("SAYIM_SATIRI", 3);   // 2 YEREL (R_SAYIM_YEREL) + 1 GENEL (R_SAYIM_GENEL)
         BEKLENEN_HEDEF_SAYILARI.put("ZIMMET_KAYDI", 2);
         BEKLENEN_HEDEF_SAYILARI.put("SQL_KAYDI", 1);
+        BEKLENEN_HEDEF_SAYILARI.put("ZIMMET_GECMISI", 1); // yeni yapı; zimmetli sicili dolu tek demirbaş (DB1) için başlangıç kaydı
     }
 
     /** GERCEK çalışmada beklenen sorunlar: "LEGACY_TABLO|SEVIYE|KOD" → adet. */
@@ -206,16 +207,16 @@ class GocEntegrasyonTesti {
         List<String> surumler = hedef().queryForList(
             "SELECT \"version\" FROM \"flyway_schema_history\" WHERE \"success\" = 1 AND \"version\" IS NOT NULL "
                 + "ORDER BY \"installed_rank\"", String.class);
-        assertThat(surumler).containsExactly("1", "1000", "1001");
+        assertThat(surumler).containsExactly("1", "2", "1000", "1001");
         assertThat(say("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME IN ("
             + BEKLENEN_HEDEF_SAYILARI.keySet().stream().map(t -> "'" + t + "'").collect(Collectors.joining(","))
-            + ")")).isEqualTo(19);
+            + ")")).isEqualTo(BEKLENEN_HEDEF_SAYILARI.size());
         assertThat(say("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME LIKE 'BATCH\\_%' ESCAPE '\\'"))
             .isGreaterThanOrEqualTo(6);
         // Şemayı yalnızca Flyway kurar: Hibernate'in HTE_ geçici tabloları oluşmamalı
         assertThat(say("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME LIKE 'HTE\\_%' ESCAPE '\\'")).isZero();
         assertThat(say("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME NOT LIKE 'BATCH\\_%' ESCAPE '\\' "
-            + "AND TABLE_NAME NOT LIKE 'MIG\\_%' ESCAPE '\\' AND TABLE_NAME <> 'flyway_schema_history'")).isEqualTo(19);
+            + "AND TABLE_NAME NOT LIKE 'MIG\\_%' ESCAPE '\\' AND TABLE_NAME <> 'flyway_schema_history'")).isEqualTo(BEKLENEN_HEDEF_SAYILARI.size());
         assertThat(legacy.satirSayisi("R_DEMIRBAS")).isEqualTo(5);
     }
 
@@ -267,6 +268,15 @@ class GocEntegrasyonTesti {
         arsivKontrolleri();
         assertThat(sorunDagilimi(calismaId, 0)).isEqualTo(BEKLENEN_SORUNLAR);
         mutabakatTamam(calismaId, 0);
+
+        // Zimmet geçmişinin başlangıcı: zimmetli sicili dolu demirbaş (DB1, PERSZIMMET ' 01234 ') için tek satır
+        assertThat(hedef().queryForMap("SELECT z.ONCEKI_SICIL, z.YENI_SICIL, z.KAYNAK, z.TUR, z.OLUSTURAN "
+            + "FROM ZIMMET_GECMISI z JOIN ENVANTER e ON e.ID = z.ENVANTER_ID WHERE e.DEMIRBAS_NO = 1001"))
+            .containsEntry("YENI_SICIL", "01234").containsEntry("KAYNAK", "MIGRATION_BASLANGICI")
+            .containsEntry("TUR", "DEMIRBAS").containsEntry("OLUSTURAN", "MIGRATION")
+            .containsEntry("ONCEKI_SICIL", null);
+        assertThat(say("SELECT COUNT(*) FROM ZIMMET_GECMISI z JOIN ENVANTER e ON e.ID = z.ENVANTER_ID "
+            + "WHERE e.ZIMMETLI_SICIL IS NULL")).as("zimmetsiz demirbaş için başlangıç kaydı yazılmaz").isZero();
 
         // Reddedilen satırların ham verisi sorun kaydında
         assertThat(hedef().queryForList("SELECT HAM_JSON FROM MIG_SORUN WHERE CALISMA_ID = ? AND SEVIYE = 'RED' "
@@ -723,7 +733,7 @@ class GocEntegrasyonTesti {
         assertThatThrownBy(() -> hedef().update("DELETE FROM ENVANTER WHERE 1 = 0"))
             .isInstanceOf(DataAccessException.class).hasMessageContaining("ORA-20001");
         assertThat(say("SELECT COUNT(*) FROM USER_TRIGGERS WHERE TRIGGER_NAME LIKE 'TRG\\_%\\_SILME\\_YASAK' ESCAPE '\\' "
-            + "AND STATUS = 'ENABLED'")).isEqualTo(19);
+            + "AND STATUS = 'ENABLED'")).isEqualTo(BEKLENEN_HEDEF_SAYILARI.size());
         // SILINME_ZAMANI ve SILEN birlikte
         assertThatThrownBy(() -> hedef().update("UPDATE DEPO SET SILINME_ZAMANI = SYSTIMESTAMP WHERE ROWNUM = 1"))
             .isInstanceOf(DataIntegrityViolationException.class).hasMessageContaining("CK_DEPO_SILME");
