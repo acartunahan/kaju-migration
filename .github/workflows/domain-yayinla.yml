@@ -1,0 +1,54 @@
+name: Domain yayınla
+
+# depo-domain modülünü (ve parent pom'u) GitHub Packages'a yayımlar.
+# Tetikleme: "domain-v<sürüm>" etiketi, ör. git tag domain-v0.1.0 && git push origin domain-v0.1.0
+# Etiketteki sürüm pom'daki sürümle aynı olmalı; aynı sürüm ikinci kez yayımlanamaz.
+
+on:
+  push:
+    tags: ['domain-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+defaults:
+  run:
+    working-directory: depo-modernizasyon
+
+jobs:
+  yayinla:
+    name: depo-domain -> GitHub Packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Kaynak kodu al
+        uses: actions/checkout@v4
+
+      - name: JDK 25 (Temurin) ve GitHub Packages kimliği
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          server-id: github
+          server-username: GITHUB_ACTOR
+          server-password: GITHUB_TOKEN
+
+      - name: Etiket ile pom sürümü aynı mı
+        if: startsWith(github.ref, 'refs/tags/domain-v')
+        run: |
+          POM_SURUM=$(mvn -B -q -N help:evaluate -Dexpression=project.version -DforceStdout)
+          ETIKET_SURUM="${GITHUB_REF_NAME#domain-v}"
+          if [ "$POM_SURUM" != "$ETIKET_SURUM" ]; then
+            echo "Etiket ($ETIKET_SURUM) ile pom sürümü ($POM_SURUM) farklı"; exit 1
+          fi
+
+      # Önce domain testleri; sonra yalnızca parent + depo-domain yayımlanır (depo-migration hariç).
+      - name: Test ve yayımla
+        run: mvn -B -ntp -pl depo-domain -am deploy
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -46,7 +46,9 @@ Bu sürümler gerçek jar'lara karşı derlenip testleri koşturularak doğrulan
 | Testcontainers | 2.0.5 (`testcontainers-oracle-free`), imaj `gvenzl/oracle-free:23-slim-faststart` |
 | Maven | 3.9.x |
 
-Maven koordinatları: `groupId = tr.depo`, `artifactId = depo-domain`, `version = 0.1.0-SNAPSHOT`
+Maven koordinatları: `groupId = tr.depo`, `artifactId = depo-domain`, `version = 0.1.0`
+(GitHub Packages: `https://maven.pkg.github.com/acartunahan/kaju-migration`; `domain-v<sürüm>` etiketiyle
+`.github/workflows/domain-yayinla.yml` yayımlar. Yerelde: `mvn -B -pl depo-domain -am install`)
 (parent: `depo-modernizasyon`). `depo-domain` bağımlılıkları: `hibernate-core`, `spring-data-jpa`
 (audit anotasyonları için); test için JUnit 5 + AssertJ.
 
@@ -1017,6 +1019,6 @@ Backend projesinde bağımlılık:
 <dependency>
     <groupId>tr.depo</groupId>
     <artifactId>depo-domain</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.0</version>
 </dependency>
 ```
