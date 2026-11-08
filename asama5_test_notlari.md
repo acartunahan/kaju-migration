@@ -83,7 +83,7 @@ Derleme ve yerel doğrulama sırasında bulundu:
 6. **Aynı etiketle tekrar:** `JobInstanceAlreadyCompleteException`.
 7. **Legacy hiç değişmedi:** Her legacy tablonun satır sayısı ve `MAX(ORA_ROWSCN)` değeri, testin başındakiyle aynı. ORA_ROWSCN, bloğa yapılan herhangi bir DML'de değişir.
 8. **Okuyucu restart:** ExecutionContext'ten devam eder. Sayfa sınırında, tamponda kalan satır da kaybolmaz.
-9. **Yetki:** Şema sahibiyle (DEPO) açılan legacy bağlantısında migration başlamaz.
+9. **Yetki kontrolü yok:** Şema sahibiyle (DEPO) açılan legacy bağlantısı da kabul edilir (kullanıcı kararı 2026-11-08).
 
 ## 4. Alan mutabakatı (canlıda da kullanılır)
 
@@ -180,7 +180,8 @@ Kontroller gerçek jar'lara karşı yapıldı. Sürümler: Boot 4.0.9, Spring Ba
 1. [ ] Uçtan uca test yeşil (`.\testleri-calistir.ps1`, Docker ile). Birim testleri ve derleme evde yeşil.
 2. [ ] DBA: legacy'de salt okunur `DEPO_OKUYUCU` kullanıcısı açıldı (Aşama 4 notları, 4. bölüm). Hedef şema boş, AL32UTF8.
    Hedef kullanıcıda `CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE TRIGGER` ve varsayılan tablespace'te kota
-   var. Eksikse uygulama hiçbir nesne oluşturmadan `ORA-20002`/`ORA-20003` ile durur ve gereken GRANT'i yazar.
+   var. Uygulama yetkileri kontrol etmez (kullanıcı kararı); eksikse V1 yarıda kalır (bkz. Aşama 4 notları, "Flyway
+   yarıda kalırsa").
 3. [ ] KURU çalıştırıldı. Raporda:
    - Tanınmayan kodlar yml'ye eklendi.
    - Kapsam dışı tablolar (`R_IADE_ONAY_HAVUZU` vb.) gözden geçirildi.

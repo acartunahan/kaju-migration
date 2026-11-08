@@ -29,8 +29,6 @@ public final class SorunKodu {
     public static final String KATEGORI_BELIRSIZ = "KATEGORI_BELIRSIZ";
     /** Bilinçli kararla taşınmayan legacy tablo; HAM_DEGER satır sayısıdır. */
     public static final String KAPSAM_DISI_KARAR = "KAPSAM_DISI_KARAR";
-    /** Legacy kullanıcısının yazma yetkisi var (politika UYAR ise). */
-    public static final String LEGACY_YAZMA_YETKISI = "LEGACY_YAZMA_YETKISI";
     /** Dönüşüm sırasında beklenmeyen hata; satır reddedildi, iş durmadı. */
     public static final String BEKLENMEYEN_HATA = "BEKLENMEYEN_HATA";
 

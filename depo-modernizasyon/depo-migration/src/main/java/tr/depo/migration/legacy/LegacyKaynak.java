@@ -118,25 +118,6 @@ public class LegacyKaynak implements DisposableBean {
         return jdbc.queryForList(sql, String.class, sema);
     }
 
-    /** Oturumda bulunan ve herhangi bir tabloya yazmayı mümkün kılan sistem yetkileri. */
-    public List<String> genisYazmaYetkileri() {
-        String sql = "SELECT PRIVILEGE FROM SESSION_PRIVS WHERE PRIVILEGE IN ("
-            + "'INSERT ANY TABLE', 'UPDATE ANY TABLE', 'DELETE ANY TABLE', 'ALTER ANY TABLE', "
-            + "'DROP ANY TABLE', 'CREATE ANY TRIGGER', 'EXECUTE ANY PROCEDURE')";
-        selectKontrolu(sql);
-        return jdbc.queryForList(sql, String.class);
-    }
-
-    /** Legacy şemadaki nesneler üzerinde doğrudan ya da rol ile verilmiş yazma yetkisi sayısı. */
-    public long nesneYazmaYetkisiSayisi() {
-        String sql = "SELECT (SELECT COUNT(*) FROM USER_TAB_PRIVS WHERE OWNER = ? "
-            + "AND PRIVILEGE IN ('INSERT', 'UPDATE', 'DELETE', 'ALTER', 'EXECUTE')) "
-            + "+ (SELECT COUNT(*) FROM ROLE_TAB_PRIVS WHERE OWNER = ? "
-            + "AND PRIVILEGE IN ('INSERT', 'UPDATE', 'DELETE', 'ALTER', 'EXECUTE')) FROM DUAL";
-        selectKontrolu(sql);
-        Long sayi = jdbc.queryForObject(sql, Long.class, sema, sema);
-        return sayi == null ? 0L : sayi;
-    }
 
     @Override
     public void destroy() {

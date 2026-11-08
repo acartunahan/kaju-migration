@@ -1,6 +1,7 @@
 package tr.depo.migration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
@@ -69,7 +70,7 @@ import tr.depo.migration.test.OracleTestOrtami;
  *   <li>Aynı etiketle tamamlanmış çalışma tekrar başlatılamaz</li>
  *   <li>Legacy hiç değişmedi (satır sayısı + ORA_ROWSCN)</li>
  *   <li>Okuyucu restart: ExecutionContext'ten kaldığı yerden devam</li>
- *   <li>Yetki kontrolü: şema sahibiyle açılan legacy bağlantısı reddedilir</li>
+ *   <li>Yetki kontrolü yok: şema sahibiyle açılan legacy bağlantısı da kabul edilir (kullanıcı kararı)</li>
  *   <li>ENVANTER_APARATI: bir demirbaşa birden fazla aparat; demirbaşsız ve adedi 0 olan aparat reddedilir</li>
  *   <li>ENVANTER_FOTOGRAFI: bir envantere birden fazla fotoğraf, tek kapak, tekil nesne anahtarı</li>
  *   <li>Soft delete: sil/geriAl, sorgu filtresi, fiziksel silme JPA ve trigger ile reddedilir</li>
@@ -581,17 +582,18 @@ class GocEntegrasyonTesti {
 
     @Test
     @Order(9)
-    void sema_sahibiyle_legacy_baglantisi_reddedilir() {
+    void yetki_kontrolu_yok_sema_sahibiyle_legacy_baglantisi_de_calisir() {
+        // Kullanıcı kararı (2026-11-08): migration'da yetki kontrolü yok. Şema sahibi (yazma yetkili) bağlantı da
+        // kabul edilir; legacy'ye yazılmaması yalnızca kodun SELECT çalıştırmasıyla sağlanır (senaryo 7 doğrular).
         GocAyarlari sahipAyarlari = new GocAyarlari(ayarlar.mod(), ayarlar.etiket(), ayarlar.chunkBoyutu(),
             ayarlar.raporKlasoru(),
             new GocAyarlari.Legacy(OracleTestOrtami.jdbcUrl(), OracleTestOrtami.LEGACY_SAHIBI,
-                OracleTestOrtami.legacySahibiSifresi(), "DEPO", 10, GocAyarlari.YetkiPolitikasi.DURDUR),
+                OracleTestOrtami.legacySahibiSifresi(), "DEPO", 10),
             ayarlar.kodEsleme());
         LegacyKaynak sahipBaglantisi = new LegacyKaynak(sahipAyarlari);
         try {
-            LegacySemaKontrolu kontrol = new LegacySemaKontrolu(sahipBaglantisi, depo, sahipAyarlari);
-            assertThatThrownBy(() -> kontrol.calistir(goclar, 999_999L, 1))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("şema sahibiyle");
+            LegacySemaKontrolu kontrol = new LegacySemaKontrolu(sahipBaglantisi, depo);
+            assertThatCode(() -> kontrol.calistir(goclar, 999_999L, 1)).doesNotThrowAnyException();
         } finally {
             sahipBaglantisi.destroy();
         }

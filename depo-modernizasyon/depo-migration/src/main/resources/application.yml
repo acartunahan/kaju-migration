@@ -75,7 +75,6 @@ migration:
     sifre: ${LEGACY_DB_SIFRE}
     sema: DEPO
     fetch-boyutu: 500
-    yazma-yetkisi-varsa: DURDUR   # DURDUR | UYAR
 
   # Legacy kod → hedef değer. Anahtarlar köşeli parantez içinde (Spring'in özel karakter
   # kuralı). Büyük/küçük harfe duyarlı. Sağdaki boşluklar silinmiş hali yazılır.

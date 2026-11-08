@@ -40,8 +40,8 @@ kısıtlarıyla veritabanında korunur. Ayrıntı: [asama2_domain_tasarim.md](as
 
 ## Temel ilkeler
 
-- **Legacy'ye asla yazılmaz.** Migration legacy'ye yalnızca `SELECT` yetkili bir kullanıcıyla
-  bağlanır; şema sahibiyle bağlanılırsa başlamadan durur.
+- **Legacy'ye asla yazılmaz.** Migration legacy'ye yalnızca sabit `SELECT` sorguları gönderir. Yetki kontrolü
+  yapılmaz; salt okunur bir kullanıcıyla (`DEPO_OKUYUCU`) bağlanılması önerilir.
 - **Hiçbir veri sessizce kaybolmaz.** Her legacy satırı ham JSON olarak `MIG_HAM_VERI`'de saklanır;
   her tablo için `kaynak = aktarılan + açık red` mutabakatı yapılır, alan mutabakatı SQL'i her hedef
   alanı ham değerle karşılaştırır.

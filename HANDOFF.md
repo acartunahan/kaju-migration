@@ -913,7 +913,7 @@ Göç uygulaması aynı şemada şu tabloları oluşturur (Flyway V1000, `depo-m
 
 Sorun kodları: `ORPHAN_REF`, `AMBIGUOUS_REF`, `BILINMEYEN_KOD`, `BOS_ZORUNLU`, `SAYI_DEGIL`, `KESIRLI_SAYI`,
 `BOS_TARIH`, `BOZUK_KARAKTER`, `ROOT_OR_ORPHAN`, `MARKA_MODEL_CELISKI`, `BEKLENMEYEN_NESNE`, `KATEGORI_BELIRSIZ`,
-`KAPSAM_DISI_KARAR`, `LEGACY_YAZMA_YETKISI`, `BEKLENMEYEN_HATA`.
+`KAPSAM_DISI_KARAR`, `BEKLENMEYEN_HATA`.
 
 `MIG_*` tabloları legacy kapatıldıktan sonra da saklanmalıdır (legacy'nin tam kopyası). Backend bu tablolara
 **yazmamalı**, şema değişikliğiyle bunlara dokunmamalı. Uzun vadede ayrı bir şemaya/arşive taşınabilir.

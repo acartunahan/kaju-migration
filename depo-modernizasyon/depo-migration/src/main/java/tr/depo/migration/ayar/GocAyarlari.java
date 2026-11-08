@@ -38,17 +38,15 @@ public record GocAyarlari(
     /**
      * Legacy (salt okunur) bağlantı.
      *
-     * @param sema              Legacy tabloların sahibi (DEPO)
-     * @param fetchBoyutu       JDBC fetch size ve sayfa boyutu
-     * @param yazmaYetkisiVarsa Legacy kullanıcısında yazma yetkisi bulunursa ne yapılacağı
+     * @param sema        Legacy tabloların sahibi (DEPO)
+     * @param fetchBoyutu JDBC fetch size ve sayfa boyutu
      */
     public record Legacy(
         String url,
         String kullanici,
         String sifre,
         String sema,
-        int fetchBoyutu,
-        YetkiPolitikasi yazmaYetkisiVarsa
+        int fetchBoyutu
     ) {
 
         public Legacy {
@@ -59,7 +57,6 @@ public record GocAyarlari(
             if (fetchBoyutu < 1) {
                 throw new IllegalArgumentException("migration.legacy.fetch-boyutu 1'den küçük olamaz");
             }
-            yazmaYetkisiVarsa = yazmaYetkisiVarsa == null ? YetkiPolitikasi.DURDUR : yazmaYetkisiVarsa;
         }
 
         /** Şifrenin loglara düşmemesi için. */
@@ -67,12 +64,5 @@ public record GocAyarlari(
         public String toString() {
             return "Legacy[url=" + url + ", kullanici=" + kullanici + ", sema=" + sema + "]";
         }
-    }
-
-    public enum YetkiPolitikasi {
-        /** Legacy kullanıcısında yazma yetkisi varsa migration başlamaz (varsayılan). */
-        DURDUR,
-        /** Sadece uyarı yazılır. Kod legacy'ye yine de yazmaz; bu bir ek savunma katmanıdır. */
-        UYAR
     }
 }
