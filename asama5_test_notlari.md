@@ -101,6 +101,8 @@ Derleme ve yerel doğrulama sırasında bulundu:
 - Çıktı yalnızca kontrol adı ve hatalı satır sayısıdır, ham kayıt içermez.
 - Satır seviyesi mutabakat (kaynak = aktarılan + açık red) zaten her çalışmanın raporunda.
 
+**SQL*Plus ile çalıştırılacaksa** önce `SET SQLBLANKLINES ON` verilmeli: sorgu içinde boş satırlar var ve SQL*Plus varsayılan olarak boş satırda sorguyu keser (`SP2-0734`). DBeaver'da gerekmez. (2026-11-08 yerel kontrol: 95 kontrol / 0 hatalı.)
+
 ## 5. Testleri çalıştırma
 
 En kolayı, proje kökündeki script'i kullanmak. JAVA_HOME tanımlı değilse `%USERPROFILE%\dev-tools` altındaki JDK ve Maven'ı kendisi bulur.
@@ -127,6 +129,13 @@ Birincisi sadece birim testlerini çalıştırır. İkincisi uçtan uca testi de
 - İlk açılışta Oracle konteyneri birkaç dakika sürebilir.
 
 ### Yerel geliştirme ortamı (ev bilgisayarı)
+
+**Son yerel doğrulama (2026-11-08, 0.2.0, 20 tablo, mock veri):** KURU 13 sn, GERCEK 12 sn, aynı veriyle ikinci GERCEK
+(yeni etiket) 9 sn. Mutabakat tüm tablolarda TAMAM; alan mutabakatı 95 kontrol / 0 hatalı; `ZIMMET_GECMISI` = 239
+başlangıç kaydı (zimmetli sicili dolu 239 demirbaşın her biri için bir; çift kayıt 0, demirbaşla uyumsuz sicil 0);
+ikinci GERCEK yeni kayıt yazmadı; 20 silme yasağı trigger'ı etkin. **Not:** `CREATE TRIGGER` yetkisi kurulum
+script'ine sonradan eklendiği için eski bir `yerel-db` volume'ünde HEDEF'te bu yetki yoktur; ya `GRANT CREATE TRIGGER
+TO HEDEF` elle verilir ya da volume `down -v` ile sıfırdan kurulur.
 
 | Araç | Nerede | Not |
 |---|---|---|
@@ -170,6 +179,8 @@ Kontroller gerçek jar'lara karşı yapıldı. Sürümler: Boot 4.0.9, Spring Ba
 
 1. [ ] Uçtan uca test yeşil (`.\testleri-calistir.ps1`, Docker ile). Birim testleri ve derleme evde yeşil.
 2. [ ] DBA: legacy'de salt okunur `DEPO_OKUYUCU` kullanıcısı açıldı (Aşama 4 notları, 4. bölüm). Hedef şema boş, AL32UTF8.
+   Hedef kullanıcıda `CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE TRIGGER` ve varsayılan tablespace'te kota
+   var. Eksikse uygulama hiçbir nesne oluşturmadan `ORA-20002`/`ORA-20003` ile durur ve gereken GRANT'i yazar.
 3. [ ] KURU çalıştırıldı. Raporda:
    - Tanınmayan kodlar yml'ye eklendi.
    - Kapsam dışı tablolar (`R_IADE_ONAY_HAVUZU` vb.) gözden geçirildi.
