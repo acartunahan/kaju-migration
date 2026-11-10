@@ -130,6 +130,12 @@ Birincisi sadece birim testlerini çalıştırır. İkincisi uçtan uca testi de
 
 ### Yerel geliştirme ortamı (ev bilgisayarı)
 
+**Hız ölçümü (2026-11-10, 0.2.0 ve 0.2.1):** Kapalı ağdaki ilk KURU'da R_DEMIRBAS (404 bin satır, 152 MB) yaklaşık
+6 bin satır/dk ilerliyordu. Yerelde 200 bin satırlık kopya (80 MB; mock satırlar çoğaltılıp GUID'ler tekilleştirildi):
+KURU R_DEMIRBAS adımı 0.2.0'da 2 dk 17 sn, 0.2.1'de 33 sn (toplam 2 dk 29 sn → 46 sn); iki raporun içeriği aynı.
+0.2.1 GERCEK R_DEMIRBAS adımı 3 dk 28 sn; burada süreyi yazma (entity + ham veri + eşleme) belirliyor. Yerel ölçümde
+ağ gecikmesi yok; kapalı ağda 0.2.0'ın satır başına sorgusu ve sayfa başına tablo taraması daha pahalıydı.
+
 **Son yerel doğrulama (2026-11-08, 0.2.0, 20 tablo, mock veri):** KURU 13 sn, GERCEK 12 sn, aynı veriyle ikinci GERCEK
 (yeni etiket) 9 sn. Mutabakat tüm tablolarda TAMAM; alan mutabakatı 95 kontrol / 0 hatalı; `ZIMMET_GECMISI` = 239
 başlangıç kaydı (zimmetli sicili dolu 239 demirbaşın her biri için bir; çift kayıt 0, demirbaşla uyumsuz sicil 0);
