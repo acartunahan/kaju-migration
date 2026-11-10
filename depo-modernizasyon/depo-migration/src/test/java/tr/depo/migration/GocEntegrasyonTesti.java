@@ -28,11 +28,17 @@ import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
+import org.springframework.batch.core.job.JobInstance;
+import org.springframework.batch.core.job.parameters.JobParameters;
 import org.springframework.batch.core.job.parameters.JobParametersBuilder;
 import org.springframework.batch.core.launch.JobOperator;
+import org.springframework.batch.core.launch.JobExecutionAlreadyRunningException;
 import org.springframework.batch.core.launch.JobInstanceAlreadyCompleteException;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.step.StepExecution;
 import org.springframework.batch.infrastructure.item.ExecutionContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.ClassPathResource;
@@ -49,8 +55,10 @@ import tr.depo.domain.envanter.EnvanterFotografi;
 import tr.depo.domain.ortak.BaseEntity;
 import tr.depo.domain.tanim.Marka;
 import tr.depo.migration.ayar.GocAyarlari;
+import tr.depo.migration.ayar.GocModu;
 import tr.depo.migration.cekirdek.GocDeposu;
 import tr.depo.migration.cekirdek.TabloGocu;
+import tr.depo.migration.job.GocCalistirici;
 import tr.depo.migration.job.LegacySemaKontrolu;
 import tr.depo.migration.job.ModelKategorisiTuretici;
 import tr.depo.migration.legacy.LegacyKaynak;
@@ -148,6 +156,8 @@ class GocEntegrasyonTesti {
 
     @Autowired
     private JobOperator jobOperator;
+    @Autowired
+    private JobRepository jobRepository;
     @Autowired
     private Job job;
     @Autowired
@@ -551,7 +561,7 @@ class GocEntegrasyonTesti {
     @Order(8)
     void okuyucu_kaldigi_yerden_devam_eder() {
         List<String> hepsi = new ArrayList<>();
-        LegacyTabloOkuyucu tam = new LegacyTabloOkuyucu(legacy, "R_DEMIRBAS", 2);
+        LegacyTabloOkuyucu tam = new LegacyTabloOkuyucu(legacy, "R_DEMIRBAS");
         tam.open(new ExecutionContext());
         for (LegacySatir s = tam.read(); s != null; s = tam.read()) {
             hepsi.add(s.rowid());
@@ -560,15 +570,15 @@ class GocEntegrasyonTesti {
         assertThat(hepsi).hasSize(5).doesNotHaveDuplicates();
 
         ExecutionContext baglam = new ExecutionContext();
-        LegacyTabloOkuyucu ilk = new LegacyTabloOkuyucu(legacy, "R_DEMIRBAS", 2);
+        LegacyTabloOkuyucu ilk = new LegacyTabloOkuyucu(legacy, "R_DEMIRBAS");
         ilk.open(baglam);
         ilk.read();
         ilk.read();
-        ilk.read(); // ikinci sayfaya geçti; tamponda 1 satır daha var
+        ilk.read(); // imleçte 2 satır daha var; restart bunları yeniden okumalı
         ilk.update(baglam);
         ilk.close();
 
-        LegacyTabloOkuyucu devam = new LegacyTabloOkuyucu(legacy, "R_DEMIRBAS", 2);
+        LegacyTabloOkuyucu devam = new LegacyTabloOkuyucu(legacy, "R_DEMIRBAS");
         devam.open(baglam);
         List<String> kalan = new ArrayList<>();
         for (LegacySatir s = devam.read(); s != null; s = devam.read()) {
@@ -791,5 +801,38 @@ class GocEntegrasyonTesti {
         assertThat(say("SELECT COUNT(*) FROM MODEL WHERE ID = ? AND KATEGORI_ID IS NULL", model1)).isEqualTo(1);
         assertThat(say("SELECT COUNT(*) FROM MIG_SORUN WHERE CALISMA_ID = 999002 AND KOD = 'KATEGORI_BELIRSIZ' "
             + "AND ESKI_ANAHTAR = 'MO1' AND HAM_DEGER = '2'")).isEqualTo(1);
+    }
+
+    // ------------------------------------------------------------------------------ 14
+
+    /**
+     * Ctrl+C / oturum kopması taklidi: çalışma ve adım kaydı "çalışıyor" (STARTED) kalmış. Spring Batch bunu
+     * doğrudan yeniden başlatmayı reddeder; GocCalistirici önce kurtarır, sonra çalışma tamamlanır.
+     */
+    @Test
+    @Order(14)
+    void yarida_kesilen_calisma_kurtarilip_tamamlanir() throws Exception {
+        JobParameters parametreler = new JobParametersBuilder()
+            .addString("mod", "KURU").addString("etiket", "kesik-1").toJobParameters();
+        JobInstance ornek = jobRepository.createJobInstance(job.getName(), parametreler);
+        JobExecution olu = jobRepository.createJobExecution(ornek, parametreler, new ExecutionContext());
+        olu.setStartTime(LocalDateTime.now());
+        olu.setStatus(BatchStatus.STARTED);
+        jobRepository.update(olu);
+        StepExecution oluAdim = jobRepository.createStepExecution("goc-RESAT_DEPO", olu);
+        oluAdim.setStartTime(LocalDateTime.now());
+        oluAdim.setStatus(BatchStatus.STARTED);
+        jobRepository.update(oluAdim);
+
+        assertThatThrownBy(() -> calistir("KURU", "kesik-1")).isInstanceOf(JobExecutionAlreadyRunningException.class);
+
+        GocAyarlari kesikAyarlari = new GocAyarlari(GocModu.KURU, "kesik-1", ayarlar.chunkBoyutu(),
+            ayarlar.raporKlasoru(), ayarlar.legacy(), ayarlar.kodEsleme());
+        new GocCalistirici(jobOperator, job, kesikAyarlari, jobRepository).run(new DefaultApplicationArguments());
+
+        JobExecution son = jobRepository.getLastJobExecution(job.getName(), parametreler);
+        assertThat(son.getId()).isNotEqualTo(olu.getId());
+        assertThat(son.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        assertThat(jobRepository.getJobExecution(olu.getId()).getStatus()).isEqualTo(BatchStatus.FAILED);
     }
 }

@@ -8,6 +8,7 @@ import java.util.stream.Collectors;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.job.builder.SimpleJobBuilder;
+import org.springframework.batch.core.listener.StepExecutionListener;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.Step;
 import org.springframework.batch.core.step.builder.StepBuilder;
@@ -34,7 +35,7 @@ import tr.depo.migration.legacy.LegacyTabloOkuyucu;
  * Job tanımı: topolojik sırada tablo adımları + 2 ağaç bağlantı adımı + model kategorisi türetme adımı
  * (Aşama 2, bölüm 7).
  *
- * <p>Her adım chunk tabanlıdır: okuma (legacy, ROWID keyset) → işleme → yazma (hedef, tek transaction).
+ * <p>Her adım chunk tabanlıdır: okuma (legacy, ROWID sıralı tek imleç) → işleme → yazma (hedef, tek transaction).
  * Tamamlanmış adımlar restart'ta atlanır; yarıda kalmış adım son commit edilen chunk'tan devam eder.
  */
 @Configuration
@@ -142,12 +143,14 @@ public class GocJobYapilandirmasi {
 
     private static Step tabloAdimi(TabloGocu<?> goc, JobRepository jobRepository, PlatformTransactionManager tm,
                                    LegacyKaynak legacy, GocServisleri servisler, GocAyarlari ayarlar) {
+        GocIslemcisi islemci = new GocIslemcisi(goc, servisler);
         return new StepBuilder("goc-" + goc.kaynakTablo(), jobRepository)
             .<LegacySatir, IslenmisSatir>chunk(ayarlar.chunkBoyutu())
             .transactionManager(tm)
-            .reader(new LegacyTabloOkuyucu(legacy, goc.kaynakTablo(), ayarlar.legacy().fetchBoyutu()))
-            .processor(new GocIslemcisi(goc, servisler))
+            .reader(new LegacyTabloOkuyucu(legacy, goc.kaynakTablo()))
+            .processor(islemci)
             .writer(new GocYazicisi(servisler))
+            .listener((StepExecutionListener) islemci)
             .build();
     }
 
@@ -156,7 +159,7 @@ public class GocJobYapilandirmasi {
         return new StepBuilder("ust-" + ust.kaynakTablo(), jobRepository)
             .<LegacySatir, UstBaglanti.Sonuc>chunk(ayarlar.chunkBoyutu())
             .transactionManager(tm)
-            .reader(new LegacyTabloOkuyucu(legacy, ust.kaynakTablo(), ayarlar.legacy().fetchBoyutu()))
+            .reader(new LegacyTabloOkuyucu(legacy, ust.kaynakTablo()))
             .processor(ust.islemci(servisler))
             .writer(ust.yazici(servisler))
             .build();

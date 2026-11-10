@@ -9,6 +9,7 @@ import org.springframework.batch.core.job.parameters.JobParameters;
 import org.springframework.batch.core.job.parameters.JobParametersBuilder;
 import org.springframework.batch.core.launch.JobOperator;
 import org.springframework.batch.core.launch.JobInstanceAlreadyCompleteException;
+import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -24,6 +25,8 @@ import tr.depo.migration.ayar.GocAyarlari;
  *   <li>Aynı parametrelerle <b>tamamlanmış</b> bir çalışma varsa başlatılmaz. Yeni bir çalışma
  *       için etiketi değiştirin. GERCEK modda yeni çalışma, daha önce aktarılmış satırları atlar;
  *       sadece reddedilmiş ya da yeni satırları işler.</li>
+ *   <li>Önceki çalışma Ctrl+C ya da bağlantı kopmasıyla yarıda kesildiyse önce kurtarılır (FAILED),
+ *       sonra kaldığı yerden devam ettirilir.</li>
  *   <li>Job başarısız biterse uygulama 0 dışı çıkış koduyla kapanır.</li>
  * </ul>
  *
@@ -40,8 +43,10 @@ public class GocCalistirici implements ApplicationRunner {
     private final JobOperator jobOperator;
     private final Job job;
     private final GocAyarlari ayarlar;
+    private final JobRepository jobRepository;
 
-    public GocCalistirici(JobOperator jobOperator, Job job, GocAyarlari ayarlar) {
+    public GocCalistirici(JobOperator jobOperator, Job job, GocAyarlari ayarlar, JobRepository jobRepository) {
+        this.jobRepository = jobRepository;
         this.jobOperator = jobOperator;
         this.job = job;
         this.ayarlar = ayarlar;
@@ -53,6 +58,7 @@ public class GocCalistirici implements ApplicationRunner {
             .addString(GocJobYapilandirmasi.PARAMETRE_MOD, ayarlar.mod().name())
             .addString(GocJobYapilandirmasi.PARAMETRE_ETIKET, ayarlar.etiket())
             .toJobParameters();
+        yarimKalaniKurtar(parametreler);
         JobExecution calistirma;
         try {
             calistirma = jobOperator.start(job, parametreler);
@@ -65,5 +71,20 @@ public class GocCalistirici implements ApplicationRunner {
                 + ". Hata düzeltildikten sonra aynı mod ve etiketle tekrar çalıştırılınca kaldığı yerden devam eder.");
         }
         log.info("Veri göçü tamamlandı: mod={}, etiket={}", ayarlar.mod(), ayarlar.etiket());
+    }
+
+    /**
+     * Önceki çalışma Ctrl+C, oturum kopması ya da makine kapanması ile kesildiyse Spring Batch kaydı
+     * "çalışıyor" (STARTED) olarak kalır ve aynı parametrelerle yeniden başlatma reddedilir. Bu uygulama
+     * tek süreç olarak çalıştırılır (runbook); başlangıçta "çalışıyor" görünen bir kayıt bu yüzden ölü bir
+     * sürece aittir. FAILED işaretlenir ki restart kaldığı chunk'tan devam edebilsin.
+     */
+    private void yarimKalaniKurtar(JobParameters parametreler) {
+        JobExecution onceki = jobRepository.getLastJobExecution(job.getName(), parametreler);
+        if (onceki != null && onceki.isRunning()) {
+            log.warn("Önceki çalışma (execution={}) yarıda kesilmiş ve '{}' durumunda kalmış; kaldığı yerden "
+                + "devam etmek için başarısız olarak işaretleniyor", onceki.getId(), onceki.getStatus());
+            jobOperator.recover(onceki);
+        }
     }
 }

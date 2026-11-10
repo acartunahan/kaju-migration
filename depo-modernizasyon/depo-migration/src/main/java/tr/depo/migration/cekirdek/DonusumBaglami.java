@@ -301,6 +301,6 @@ public final class DonusumBaglami {
         if (kuru() || modelId == null) {
             return null;
         }
-        return servisler.depo().modelinMarkasi(modelId);
+        return servisler.cozucu().modelinMarkasi(modelId);
     }
 }

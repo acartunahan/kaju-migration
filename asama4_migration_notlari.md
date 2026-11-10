@@ -92,7 +92,9 @@ Tüm DEPO tablolarına SELECT verilmesinin sebebi şu: Kapsam dışı tablolar `
 - Hedef şema boş olmalı.
 - Hedef kullanıcısı tablo, sequence, index ve **trigger** oluşturabilmeli (`GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE VIEW, CREATE TRIGGER`) ve varsayılan tablespace'te kotası olmalı. Trigger'lar fiziksel silme yasağı içindir (soft delete, 2026-11-08). Kurulumdan sonra uygulama kullanıcısına DELETE ve TRUNCATE yetkisi verilmemesi önerilir.
 - **KURU mod da hedefe şemayı kurar** (Flyway her açılışta çalışır; domain tabloları boş kalır, `MIG_*` ve `BATCH_*` tablolarına yazılır). KURU'yu canlı hedef yerine bir test şemasında denemek isterseniz `HEDEF_DB_*` o şemayı göstermelidir.
-- Hedef DB karakter seti AL32UTF8 olmalı.
+- Hedef DB karakter seti AL32UTF8 önerilir. Tek baytlı Türkçe set (WE8ISO8859P9) de çalışır; Oracle sürücüsünün bunun için istediği `orai18n` jar'ın içindedir (0.2.1). Kapalı ağdaki ilk deneme (2026-11-10): test DB WE8ISO8859P9, Oracle 12.2.
+- Okuma her legacy tabloyu ROWID sırasıyla **tek imleçle** okur (0.2.1). 0.2.0'daki sayfa sayfa keyset sorgusu her sayfada tablonun kalanını tarayıp sıralıyordu; 404 bin satırlık R_DEMIRBAS'ta saatler sürüyordu.
+- Çalışma Ctrl+C ya da oturum kopmasıyla kesilirse Spring Batch kaydı "STARTED" kalır. `GocCalistirici` başlangıçta bunu FAILED işaretler (`JobOperator.recover`), böylece aynı mod ve etiketle devam edilir. Varsayım: aynı hedefe aynı anda tek süreç çalışır.
 - Legacy tablolar migration süresince taşınmamalı (`ALTER TABLE MOVE`, export/import yok). Satır kimliği ROWID'dir; tablo taşınırsa değişir (K4).
 
 ```bash
@@ -100,7 +102,7 @@ mvn -pl depo-migration -am package
 ```
 
 ```bash
-java -jar depo-migration/target/depo-migration-0.2.0.jar --migration.mod=KURU --migration.etiket=kuru-1
+java -jar depo-migration/target/depo-migration-0.2.1.jar --migration.mod=KURU --migration.etiket=kuru-1
 ```
 
 Ortam değişkenleri: `HEDEF_DB_URL`, `HEDEF_DB_KULLANICI`, `HEDEF_DB_SIFRE`, `LEGACY_DB_URL`, `LEGACY_DB_KULLANICI`, `LEGACY_DB_SIFRE`.

@@ -1,5 +1,6 @@
 package tr.depo.migration.cekirdek;
 
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.stereotype.Component;
@@ -26,6 +27,9 @@ public class ReferansCozucu {
         }
     };
 
+    /** Model ID → marka ID. Model sayısı sınırlı olduğu için boyut sınırı yok; null değer "markasız" demek. */
+    private final Map<Long, Long> modelMarkalari = new HashMap<>();
+
     public ReferansCozucu(GocDeposu depo, CalismaBaglami calisma) {
         this.depo = depo;
         this.calisma = calisma;
@@ -51,10 +55,24 @@ public class ReferansCozucu {
     }
 
     /**
+     * Hedefteki bir modelin marka ID'si (GERCEK mod). MODEL adımı demirbaşlardan önce bittiği için cevap
+     * çalışma boyunca değişmez; model başına bir kez sorulur.
+     */
+    public synchronized Long modelinMarkasi(long modelId) {
+        if (modelMarkalari.containsKey(modelId)) {
+            return modelMarkalari.get(modelId);
+        }
+        Long marka = depo.modelinMarkasi(modelId);
+        modelMarkalari.put(modelId, marka);
+        return marka;
+    }
+
+    /**
      * Her job başında çağrılır. Önceki çalışmada reddedilmiş ebeveynler bu çalışmada aktarılmış
      * olabilir; eski "Yok" cevapları kullanılmamalı.
      */
     public synchronized void temizle() {
         onbellek.clear();
+        modelMarkalari.clear();
     }
 }
