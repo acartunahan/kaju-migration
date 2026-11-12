@@ -213,7 +213,7 @@ Bağlantısız tablolar: `COKLU_ZIMMET`, `SQL_KAYDI`.
 | Enum | Legacy kolon | Varsayılan eşleme | Kaynak |
 |---|---|---|---|
 | `AlimYolu` | `R_DEMIRBAS.ALIM_YOLU` | 0 `BILGI_ISLEM_DB`, 1 `IKMAL_BAKIM_DB`, 2 `HABERLESME_DB`, 3 `HABERALMA_OD`, 4 `KAYNAGI_BELIRSIZ` | KESİN: comment |
-| `DemirbasDurumu` | `R_DEMIRBAS.DURUM` (CHAR(3), trim) | '1' `NORMAL`, '2' `ARIZALI` | KESİN: comment |
+| `DemirbasDurumu` | `R_DEMIRBAS.DURUM` (CHAR(3), trim) | '1' `NORMAL`, '2' `ARIZALI`, '3' `IADE` | KESİN: comment (1, 2); 3 Delphi kodundan, 2026-11-12 (V3) |
 | ~~`IadeDurumu`~~ | `R_IADE_HAVUZU.DURUM` | Kaldırıldı: tablo sadece arşivlenir (K9) | — |
 | `ArizaIslemTuru` | `R_ARIZA_LOG.TUR` | 1 `ISLEM`, 2 `BILGI`, 3 `SIKAYET`, 4 `TESEKKUR` | KESİN: comment |
 | `SayimKapsami` | `R_SAYIM.TUR` | 'Y' `YEREL`, 'G' `GENEL` | KESİN: comment |

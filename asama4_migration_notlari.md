@@ -102,7 +102,7 @@ mvn -pl depo-migration -am package
 ```
 
 ```bash
-java -jar depo-migration/target/depo-migration-0.2.1.jar --migration.mod=KURU --migration.etiket=kuru-1
+java -jar depo-migration/target/depo-migration-0.2.2.jar --migration.mod=KURU --migration.etiket=kuru-1
 ```
 
 Ortam değişkenleri: `HEDEF_DB_URL`, `HEDEF_DB_KULLANICI`, `HEDEF_DB_SIFRE`, `LEGACY_DB_URL`, `LEGACY_DB_KULLANICI`, `LEGACY_DB_SIFRE`.

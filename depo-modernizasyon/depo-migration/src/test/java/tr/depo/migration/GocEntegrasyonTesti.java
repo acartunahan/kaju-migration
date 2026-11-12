@@ -70,7 +70,7 @@ import tr.depo.migration.test.OracleTestOrtami;
  * Uçtan uca test: Gerçek bir Oracle (Testcontainers, gvenzl/oracle-free) üzerinde.
  *
  * <ol>
- *   <li>Flyway (V1-V2 domain, V1000 göç tabloları, V1001 Spring Batch) + {@code ddl-auto=validate}</li>
+ *   <li>Flyway (V1-V3 domain, V1000 göç tabloları, V1001 Spring Batch) + {@code ddl-auto=validate}</li>
  *   <li>KURU çalışma: hedef domain tablolarına yazılmaz, rapor üretilir</li>
  *   <li>GERCEK çalışma: tablo sayıları, sorun dağılımı, mutabakat, tek tek alan kontrolleri</li>
  *   <li>Alan mutabakatı SQL'i: Hedefteki her alan, ham legacy JSON'u ile karşılaştırılır</li>
@@ -218,7 +218,7 @@ class GocEntegrasyonTesti {
         List<String> surumler = hedef().queryForList(
             "SELECT \"version\" FROM \"flyway_schema_history\" WHERE \"success\" = 1 AND \"version\" IS NOT NULL "
                 + "ORDER BY \"installed_rank\"", String.class);
-        assertThat(surumler).containsExactly("1", "2", "1000", "1001");
+        assertThat(surumler).containsExactly("1", "2", "3", "1000", "1001");
         assertThat(say("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME IN ("
             + BEKLENEN_HEDEF_SAYILARI.keySet().stream().map(t -> "'" + t + "'").collect(Collectors.joining(","))
             + ")")).isEqualTo(BEKLENEN_HEDEF_SAYILARI.size());
@@ -229,6 +229,10 @@ class GocEntegrasyonTesti {
         assertThat(say("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME NOT LIKE 'BATCH\\_%' ESCAPE '\\' "
             + "AND TABLE_NAME NOT LIKE 'MIG\\_%' ESCAPE '\\' AND TABLE_NAME <> 'flyway_schema_history'")).isEqualTo(BEKLENEN_HEDEF_SAYILARI.size());
         assertThat(legacy.satirSayisi("R_DEMIRBAS")).isEqualTo(5);
+        // DURUM '3' = İade (Delphi kodu, 2026-11-12): eşleme application.yml'de, kısıt V3'te
+        assertThat(ayarlar.kodEsleme().demirbasDurumu()).containsEntry("3", "IADE");
+        assertThat(say("SELECT COUNT(*) FROM USER_CONSTRAINTS WHERE CONSTRAINT_NAME = 'CK_ENVANTER_DURUM' "
+            + "AND SEARCH_CONDITION_VC LIKE '%''IADE''%'")).isEqualTo(1);
     }
 
     // ------------------------------------------------------------------------------ 2
