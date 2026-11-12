@@ -19,7 +19,7 @@
 
     <groupId>tr.depo</groupId>
     <artifactId>depo-modernizasyon</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.2</version>
     <packaging>pom</packaging>
     <name>depo-modernizasyon</name>
     <description>DEPO legacy sisteminin Java 25 / Spring Boot 4 ile yeniden yazımı</description>

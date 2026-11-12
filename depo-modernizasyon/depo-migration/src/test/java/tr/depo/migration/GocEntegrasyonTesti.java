@@ -1,6 +1,7 @@
 package tr.depo.migration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
@@ -27,11 +28,17 @@ import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
+import org.springframework.batch.core.job.JobInstance;
+import org.springframework.batch.core.job.parameters.JobParameters;
 import org.springframework.batch.core.job.parameters.JobParametersBuilder;
 import org.springframework.batch.core.launch.JobOperator;
+import org.springframework.batch.core.launch.JobExecutionAlreadyRunningException;
 import org.springframework.batch.core.launch.JobInstanceAlreadyCompleteException;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.step.StepExecution;
 import org.springframework.batch.infrastructure.item.ExecutionContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.ClassPathResource;
@@ -48,8 +55,10 @@ import tr.depo.domain.envanter.EnvanterFotografi;
 import tr.depo.domain.ortak.BaseEntity;
 import tr.depo.domain.tanim.Marka;
 import tr.depo.migration.ayar.GocAyarlari;
+import tr.depo.migration.ayar.GocModu;
 import tr.depo.migration.cekirdek.GocDeposu;
 import tr.depo.migration.cekirdek.TabloGocu;
+import tr.depo.migration.job.GocCalistirici;
 import tr.depo.migration.job.LegacySemaKontrolu;
 import tr.depo.migration.job.ModelKategorisiTuretici;
 import tr.depo.migration.legacy.LegacyKaynak;
@@ -61,7 +70,7 @@ import tr.depo.migration.test.OracleTestOrtami;
  * Uçtan uca test: Gerçek bir Oracle (Testcontainers, gvenzl/oracle-free) üzerinde.
  *
  * <ol>
- *   <li>Flyway (V1-V2 domain, V1000 göç tabloları, V1001 Spring Batch) + {@code ddl-auto=validate}</li>
+ *   <li>Flyway (V1-V3 domain, V1000 göç tabloları, V1001 Spring Batch) + {@code ddl-auto=validate}</li>
  *   <li>KURU çalışma: hedef domain tablolarına yazılmaz, rapor üretilir</li>
  *   <li>GERCEK çalışma: tablo sayıları, sorun dağılımı, mutabakat, tek tek alan kontrolleri</li>
  *   <li>Alan mutabakatı SQL'i: Hedefteki her alan, ham legacy JSON'u ile karşılaştırılır</li>
@@ -69,7 +78,7 @@ import tr.depo.migration.test.OracleTestOrtami;
  *   <li>Aynı etiketle tamamlanmış çalışma tekrar başlatılamaz</li>
  *   <li>Legacy hiç değişmedi (satır sayısı + ORA_ROWSCN)</li>
  *   <li>Okuyucu restart: ExecutionContext'ten kaldığı yerden devam</li>
- *   <li>Yetki kontrolü: şema sahibiyle açılan legacy bağlantısı reddedilir</li>
+ *   <li>Yetki kontrolü yok: şema sahibiyle açılan legacy bağlantısı da kabul edilir (kullanıcı kararı)</li>
  *   <li>ENVANTER_APARATI: bir demirbaşa birden fazla aparat; demirbaşsız ve adedi 0 olan aparat reddedilir</li>
  *   <li>ENVANTER_FOTOGRAFI: bir envantere birden fazla fotoğraf, tek kapak, tekil nesne anahtarı</li>
  *   <li>Soft delete: sil/geriAl, sorgu filtresi, fiziksel silme JPA ve trigger ile reddedilir</li>
@@ -111,6 +120,7 @@ class GocEntegrasyonTesti {
         BEKLENEN_HEDEF_SAYILARI.put("SAYIM_SATIRI", 3);   // 2 YEREL (R_SAYIM_YEREL) + 1 GENEL (R_SAYIM_GENEL)
         BEKLENEN_HEDEF_SAYILARI.put("ZIMMET_KAYDI", 2);
         BEKLENEN_HEDEF_SAYILARI.put("SQL_KAYDI", 1);
+        BEKLENEN_HEDEF_SAYILARI.put("ZIMMET_GECMISI", 1); // yeni yapı; zimmetli sicili dolu tek demirbaş (DB1) için başlangıç kaydı
     }
 
     /** GERCEK çalışmada beklenen sorunlar: "LEGACY_TABLO|SEVIYE|KOD" → adet. */
@@ -146,6 +156,8 @@ class GocEntegrasyonTesti {
 
     @Autowired
     private JobOperator jobOperator;
+    @Autowired
+    private JobRepository jobRepository;
     @Autowired
     private Job job;
     @Autowired
@@ -206,17 +218,21 @@ class GocEntegrasyonTesti {
         List<String> surumler = hedef().queryForList(
             "SELECT \"version\" FROM \"flyway_schema_history\" WHERE \"success\" = 1 AND \"version\" IS NOT NULL "
                 + "ORDER BY \"installed_rank\"", String.class);
-        assertThat(surumler).containsExactly("1", "1000", "1001");
+        assertThat(surumler).containsExactly("1", "2", "3", "1000", "1001");
         assertThat(say("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME IN ("
             + BEKLENEN_HEDEF_SAYILARI.keySet().stream().map(t -> "'" + t + "'").collect(Collectors.joining(","))
-            + ")")).isEqualTo(19);
+            + ")")).isEqualTo(BEKLENEN_HEDEF_SAYILARI.size());
         assertThat(say("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME LIKE 'BATCH\\_%' ESCAPE '\\'"))
             .isGreaterThanOrEqualTo(6);
         // Şemayı yalnızca Flyway kurar: Hibernate'in HTE_ geçici tabloları oluşmamalı
         assertThat(say("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME LIKE 'HTE\\_%' ESCAPE '\\'")).isZero();
         assertThat(say("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME NOT LIKE 'BATCH\\_%' ESCAPE '\\' "
-            + "AND TABLE_NAME NOT LIKE 'MIG\\_%' ESCAPE '\\' AND TABLE_NAME <> 'flyway_schema_history'")).isEqualTo(19);
+            + "AND TABLE_NAME NOT LIKE 'MIG\\_%' ESCAPE '\\' AND TABLE_NAME <> 'flyway_schema_history'")).isEqualTo(BEKLENEN_HEDEF_SAYILARI.size());
         assertThat(legacy.satirSayisi("R_DEMIRBAS")).isEqualTo(5);
+        // DURUM '3' = İade (Delphi kodu, 2026-11-12): eşleme application.yml'de, kısıt V3'te
+        assertThat(ayarlar.kodEsleme().demirbasDurumu()).containsEntry("3", "IADE");
+        assertThat(say("SELECT COUNT(*) FROM USER_CONSTRAINTS WHERE CONSTRAINT_NAME = 'CK_ENVANTER_DURUM' "
+            + "AND SEARCH_CONDITION_VC LIKE '%''IADE''%'")).isEqualTo(1);
     }
 
     // ------------------------------------------------------------------------------ 2
@@ -267,6 +283,15 @@ class GocEntegrasyonTesti {
         arsivKontrolleri();
         assertThat(sorunDagilimi(calismaId, 0)).isEqualTo(BEKLENEN_SORUNLAR);
         mutabakatTamam(calismaId, 0);
+
+        // Zimmet geçmişinin başlangıcı: zimmetli sicili dolu demirbaş (DB1, PERSZIMMET ' 01234 ') için tek satır
+        assertThat(hedef().queryForMap("SELECT z.ONCEKI_SICIL, z.YENI_SICIL, z.KAYNAK, z.TUR, z.OLUSTURAN "
+            + "FROM ZIMMET_GECMISI z JOIN ENVANTER e ON e.ID = z.ENVANTER_ID WHERE e.DEMIRBAS_NO = 1001"))
+            .containsEntry("YENI_SICIL", "01234").containsEntry("KAYNAK", "MIGRATION_BASLANGICI")
+            .containsEntry("TUR", "DEMIRBAS").containsEntry("OLUSTURAN", "MIGRATION")
+            .containsEntry("ONCEKI_SICIL", null);
+        assertThat(say("SELECT COUNT(*) FROM ZIMMET_GECMISI z JOIN ENVANTER e ON e.ID = z.ENVANTER_ID "
+            + "WHERE e.ZIMMETLI_SICIL IS NULL")).as("zimmetsiz demirbaş için başlangıç kaydı yazılmaz").isZero();
 
         // Reddedilen satırların ham verisi sorun kaydında
         assertThat(hedef().queryForList("SELECT HAM_JSON FROM MIG_SORUN WHERE CALISMA_ID = ? AND SEVIYE = 'RED' "
@@ -540,7 +565,7 @@ class GocEntegrasyonTesti {
     @Order(8)
     void okuyucu_kaldigi_yerden_devam_eder() {
         List<String> hepsi = new ArrayList<>();
-        LegacyTabloOkuyucu tam = new LegacyTabloOkuyucu(legacy, "R_DEMIRBAS", 2);
+        LegacyTabloOkuyucu tam = new LegacyTabloOkuyucu(legacy, "R_DEMIRBAS");
         tam.open(new ExecutionContext());
         for (LegacySatir s = tam.read(); s != null; s = tam.read()) {
             hepsi.add(s.rowid());
@@ -549,15 +574,15 @@ class GocEntegrasyonTesti {
         assertThat(hepsi).hasSize(5).doesNotHaveDuplicates();
 
         ExecutionContext baglam = new ExecutionContext();
-        LegacyTabloOkuyucu ilk = new LegacyTabloOkuyucu(legacy, "R_DEMIRBAS", 2);
+        LegacyTabloOkuyucu ilk = new LegacyTabloOkuyucu(legacy, "R_DEMIRBAS");
         ilk.open(baglam);
         ilk.read();
         ilk.read();
-        ilk.read(); // ikinci sayfaya geçti; tamponda 1 satır daha var
+        ilk.read(); // imleçte 2 satır daha var; restart bunları yeniden okumalı
         ilk.update(baglam);
         ilk.close();
 
-        LegacyTabloOkuyucu devam = new LegacyTabloOkuyucu(legacy, "R_DEMIRBAS", 2);
+        LegacyTabloOkuyucu devam = new LegacyTabloOkuyucu(legacy, "R_DEMIRBAS");
         devam.open(baglam);
         List<String> kalan = new ArrayList<>();
         for (LegacySatir s = devam.read(); s != null; s = devam.read()) {
@@ -571,17 +596,18 @@ class GocEntegrasyonTesti {
 
     @Test
     @Order(9)
-    void sema_sahibiyle_legacy_baglantisi_reddedilir() {
+    void yetki_kontrolu_yok_sema_sahibiyle_legacy_baglantisi_de_calisir() {
+        // Kullanıcı kararı (2026-11-08): migration'da yetki kontrolü yok. Şema sahibi (yazma yetkili) bağlantı da
+        // kabul edilir; legacy'ye yazılmaması yalnızca kodun SELECT çalıştırmasıyla sağlanır (senaryo 7 doğrular).
         GocAyarlari sahipAyarlari = new GocAyarlari(ayarlar.mod(), ayarlar.etiket(), ayarlar.chunkBoyutu(),
             ayarlar.raporKlasoru(),
             new GocAyarlari.Legacy(OracleTestOrtami.jdbcUrl(), OracleTestOrtami.LEGACY_SAHIBI,
-                OracleTestOrtami.legacySahibiSifresi(), "DEPO", 10, GocAyarlari.YetkiPolitikasi.DURDUR),
+                OracleTestOrtami.legacySahibiSifresi(), "DEPO", 10),
             ayarlar.kodEsleme());
         LegacyKaynak sahipBaglantisi = new LegacyKaynak(sahipAyarlari);
         try {
-            LegacySemaKontrolu kontrol = new LegacySemaKontrolu(sahipBaglantisi, depo, sahipAyarlari);
-            assertThatThrownBy(() -> kontrol.calistir(goclar, 999_999L, 1))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("şema sahibiyle");
+            LegacySemaKontrolu kontrol = new LegacySemaKontrolu(sahipBaglantisi, depo);
+            assertThatCode(() -> kontrol.calistir(goclar, 999_999L, 1)).doesNotThrowAnyException();
         } finally {
             sahipBaglantisi.destroy();
         }
@@ -723,7 +749,7 @@ class GocEntegrasyonTesti {
         assertThatThrownBy(() -> hedef().update("DELETE FROM ENVANTER WHERE 1 = 0"))
             .isInstanceOf(DataAccessException.class).hasMessageContaining("ORA-20001");
         assertThat(say("SELECT COUNT(*) FROM USER_TRIGGERS WHERE TRIGGER_NAME LIKE 'TRG\\_%\\_SILME\\_YASAK' ESCAPE '\\' "
-            + "AND STATUS = 'ENABLED'")).isEqualTo(19);
+            + "AND STATUS = 'ENABLED'")).isEqualTo(BEKLENEN_HEDEF_SAYILARI.size());
         // SILINME_ZAMANI ve SILEN birlikte
         assertThatThrownBy(() -> hedef().update("UPDATE DEPO SET SILINME_ZAMANI = SYSTIMESTAMP WHERE ROWNUM = 1"))
             .isInstanceOf(DataIntegrityViolationException.class).hasMessageContaining("CK_DEPO_SILME");
@@ -779,5 +805,38 @@ class GocEntegrasyonTesti {
         assertThat(say("SELECT COUNT(*) FROM MODEL WHERE ID = ? AND KATEGORI_ID IS NULL", model1)).isEqualTo(1);
         assertThat(say("SELECT COUNT(*) FROM MIG_SORUN WHERE CALISMA_ID = 999002 AND KOD = 'KATEGORI_BELIRSIZ' "
             + "AND ESKI_ANAHTAR = 'MO1' AND HAM_DEGER = '2'")).isEqualTo(1);
+    }
+
+    // ------------------------------------------------------------------------------ 14
+
+    /**
+     * Ctrl+C / oturum kopması taklidi: çalışma ve adım kaydı "çalışıyor" (STARTED) kalmış. Spring Batch bunu
+     * doğrudan yeniden başlatmayı reddeder; GocCalistirici önce kurtarır, sonra çalışma tamamlanır.
+     */
+    @Test
+    @Order(14)
+    void yarida_kesilen_calisma_kurtarilip_tamamlanir() throws Exception {
+        JobParameters parametreler = new JobParametersBuilder()
+            .addString("mod", "KURU").addString("etiket", "kesik-1").toJobParameters();
+        JobInstance ornek = jobRepository.createJobInstance(job.getName(), parametreler);
+        JobExecution olu = jobRepository.createJobExecution(ornek, parametreler, new ExecutionContext());
+        olu.setStartTime(LocalDateTime.now());
+        olu.setStatus(BatchStatus.STARTED);
+        jobRepository.update(olu);
+        StepExecution oluAdim = jobRepository.createStepExecution("goc-RESAT_DEPO", olu);
+        oluAdim.setStartTime(LocalDateTime.now());
+        oluAdim.setStatus(BatchStatus.STARTED);
+        jobRepository.update(oluAdim);
+
+        assertThatThrownBy(() -> calistir("KURU", "kesik-1")).isInstanceOf(JobExecutionAlreadyRunningException.class);
+
+        GocAyarlari kesikAyarlari = new GocAyarlari(GocModu.KURU, "kesik-1", ayarlar.chunkBoyutu(),
+            ayarlar.raporKlasoru(), ayarlar.legacy(), ayarlar.kodEsleme());
+        new GocCalistirici(jobOperator, job, kesikAyarlari, jobRepository).run(new DefaultApplicationArguments());
+
+        JobExecution son = jobRepository.getLastJobExecution(job.getName(), parametreler);
+        assertThat(son.getId()).isNotEqualTo(olu.getId());
+        assertThat(son.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        assertThat(jobRepository.getJobExecution(olu.getId()).getStatus()).isEqualTo(BatchStatus.FAILED);
     }
 }

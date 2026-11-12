@@ -9,8 +9,6 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
-import tr.depo.migration.ayar.GocAyarlari;
-import tr.depo.migration.ayar.GocAyarlari.YetkiPolitikasi;
 import tr.depo.migration.cekirdek.GocDeposu;
 import tr.depo.migration.cekirdek.GocDeposu.SorunSatiri;
 import tr.depo.migration.cekirdek.SorunKaydi;
@@ -23,8 +21,8 @@ import tr.depo.migration.legacy.LegacyKaynak;
  * Job başlamadan önce yapılan kontroller. Biri başarısız olursa job hiç başlamaz.
  *
  * <ol>
- *   <li><b>Yetki:</b> Legacy kullanıcısı şema sahibi olamaz. Yazma yetkisi bulunursa
- *       politikaya göre durur ya da uyarır. Hedef ve legacy kullanıcısı aynı olamaz.</li>
+ *   <li><b>Ayrı kullanıcı:</b> Hedef ve legacy bağlantısı aynı kullanıcıyla açılamaz. Yetki kontrolü yapılmaz
+ *       (kullanıcı kararı 2026-11-08); legacy'ye yazılmaması kodun yalnızca SELECT çalıştırmasıyla sağlanır.</li>
  *   <li><b>Kolonlar:</b> Onaylı DDL'deki (Aşama 0) her kolon legacy'de bulunmalı; eksikse durur.
  *       Fazla kolonlar UYARI olarak yazılır. Bu kolonlar ham veri JSON'unda zaten korunur (K1).</li>
  *   <li><b>Tablolar:</b> Kapsam dışındaki legacy tablolar satır sayısıyla UYARI olarak yazılır (K9).
@@ -45,50 +43,30 @@ public class LegacySemaKontrolu {
 
     private final LegacyKaynak legacy;
     private final GocDeposu depo;
-    private final GocAyarlari ayarlar;
 
-    public LegacySemaKontrolu(LegacyKaynak legacy, GocDeposu depo, GocAyarlari ayarlar) {
+    public LegacySemaKontrolu(LegacyKaynak legacy, GocDeposu depo) {
         this.legacy = legacy;
         this.depo = depo;
-        this.ayarlar = ayarlar;
     }
 
     public void calistir(List<TabloGocu<?>> goclar, long calismaId, int kuru) {
         List<SorunSatiri> sorunlar = new ArrayList<>();
-        yetkiKontrolu(sorunlar);
+        ayriKullaniciKontrolu();
         kolonVeTabloKontrolu(goclar, sorunlar);
         depo.sorunlariEkle(calismaId, kuru, sorunlar);
     }
 
-    private void yetkiKontrolu(List<SorunSatiri> sorunlar) {
+    /**
+     * Yetki kontrolü değildir (kullanıcı kararı 2026-11-08: migration'da yetki kontrolü yok): yalnızca iki bağlantının
+     * aynı kullanıcıyla açılmasını, yani yeni şemanın legacy şemanın içine kurulmasını engeller.
+     */
+    private void ayriKullaniciKontrolu() {
         String legacyKullanici = legacy.oturumKullanicisi().toUpperCase(Locale.ROOT);
         String hedefKullanici = depo.oturumKullanicisi().toUpperCase(Locale.ROOT);
         if (legacyKullanici.equals(hedefKullanici)) {
             throw new IllegalStateException("Legacy ve hedef bağlantısı aynı kullanıcıyla açılmış: " + legacyKullanici
                 + ". Hedef şema legacy şemadan ayrı olmalı.");
         }
-        if (legacyKullanici.equals(legacy.sema())) {
-            ihlal(sorunlar, "Legacy bağlantısı şema sahibiyle (" + legacyKullanici + ") açılmış. "
-                + "Sadece SELECT yetkisi olan ayrı bir kullanıcı kullanın.");
-        }
-        List<String> genisYetkiler = legacy.genisYazmaYetkileri();
-        if (!genisYetkiler.isEmpty()) {
-            ihlal(sorunlar, "Legacy kullanıcısında sistem genelinde yazma yetkisi var: " + genisYetkiler);
-        }
-        long nesneYetkisi = legacy.nesneYazmaYetkisiSayisi();
-        if (nesneYetkisi > 0) {
-            ihlal(sorunlar, "Legacy kullanıcısının " + legacy.sema() + " nesneleri üzerinde " + nesneYetkisi
-                + " adet yazma/çalıştırma yetkisi var.");
-        }
-    }
-
-    private void ihlal(List<SorunSatiri> sorunlar, String mesaj) {
-        if (ayarlar.legacy().yazmaYetkisiVarsa() == YetkiPolitikasi.DURDUR) {
-            throw new IllegalStateException(mesaj + " (migration.legacy.yazma-yetkisi-varsa=DURDUR)");
-        }
-        log.warn("{} Kod legacy'ye yazmaz; devam ediliyor (politika: UYAR).", mesaj);
-        sorunlar.add(new SorunSatiri(null, null, null,
-            new SorunKaydi(Seviye.UYARI, SorunKodu.LEGACY_YAZMA_YETKISI, null, null, mesaj), null));
     }
 
     private void kolonVeTabloKontrolu(List<TabloGocu<?>> goclar, List<SorunSatiri> sorunlar) {

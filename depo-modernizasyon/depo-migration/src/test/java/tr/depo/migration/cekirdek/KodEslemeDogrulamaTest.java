@@ -25,7 +25,7 @@ class KodEslemeDogrulamaTest {
             Map.of("Y", "YEREL"), Map.of("0", "DEVAM_EDIYOR"), Map.of("0", "SAYILMADI"), Map.of("Z", "ZIMMET"),
             genelSayimIslemi, Map.of("ZİMMET", "ZIMMET"), barkodSeriMi, Map.of("1", "true"));
         return new GocAyarlari(GocModu.KURU, "t", 10, Path.of("."),
-            new GocAyarlari.Legacy("jdbc:x", "u", "p", "DEPO", 10, null), kodlar);
+            new GocAyarlari.Legacy("jdbc:x", "u", "p", "DEPO", 10), kodlar);
     }
 
     private static GocServisleri olustur(GocAyarlari ayarlar) {

@@ -69,11 +69,7 @@ GocCalistirici (mod, etiket)
 1. **Erişim tek sınıfta.** Legacy DataSource bir Spring bean'i değil; yalnızca `LegacyKaynak` içinde var. JPA, Flyway ve Batch onu göremez.
 2. **Sadece sabit SELECT'ler.** `LegacyKaynak` içindeki her SQL çalışmadan önce `SELECT` ile başladığı kontrol edilir. Tablo ve şema adları desenle doğrulanır.
 3. **`readOnly=true` bağlantı.** Oracle için bu bir ipucudur; tek başına güvence değildir.
-4. **Başlangıçta yetki kontrolü.** Şu durumlarda migration başlamaz (`yazma-yetkisi-varsa: DURDUR`):
-   - Legacy kullanıcısı şema sahibiyse (DEPO).
-   - Kullanıcıda `INSERT/UPDATE/DELETE ANY TABLE` gibi sistem yetkileri varsa.
-   - DEPO nesneleri üzerinde yazma veya çalıştırma yetkisi varsa.
-   - Hedef ve legacy kullanıcısı aynıysa.
+4. **Yetki kontrolü yok** (kullanıcı kararı 2026-11-08: migration ve backend'de yetki kontrolü olmayacak). Legacy kullanıcısının yetkileri kontrol edilmez; şema sahibiyle (DEPO) bağlanılsa da migration çalışır. Legacy'ye yazılmaması 1-3. maddelerle (yalnızca sabit SELECT) sağlanır. Tek başlangıç kontrolü: hedef ve legacy bağlantısı aynı kullanıcıyla açılamaz (yeni şema legacy şemanın içine kurulmasın diye; bu bir yetki kontrolü değildir).
 
 **Runbook önerisi (DBA'nın yapacağı iş, migration değil).** Legacy DB'de sadece okuma yetkisi olan bir kullanıcı açılmalı:
 
@@ -94,8 +90,11 @@ Tüm DEPO tablolarına SELECT verilmesinin sebebi şu: Kapsam dışı tablolar `
 
 **Ön koşullar:**
 - Hedef şema boş olmalı.
-- Hedef kullanıcısı tablo, sequence, index ve **trigger** oluşturabilmeli (`GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE VIEW, CREATE TRIGGER`). Trigger'lar fiziksel silme yasağı içindir (soft delete, 2026-11-08). Kurulumdan sonra uygulama kullanıcısına DELETE ve TRUNCATE yetkisi verilmemesi önerilir.
-- Hedef DB karakter seti AL32UTF8 olmalı.
+- Hedef kullanıcısı tablo, sequence, index ve **trigger** oluşturabilmeli (`GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE VIEW, CREATE TRIGGER`) ve varsayılan tablespace'te kotası olmalı. Trigger'lar fiziksel silme yasağı içindir (soft delete, 2026-11-08). Kurulumdan sonra uygulama kullanıcısına DELETE ve TRUNCATE yetkisi verilmemesi önerilir.
+- **KURU mod da hedefe şemayı kurar** (Flyway her açılışta çalışır; domain tabloları boş kalır, `MIG_*` ve `BATCH_*` tablolarına yazılır). KURU'yu canlı hedef yerine bir test şemasında denemek isterseniz `HEDEF_DB_*` o şemayı göstermelidir.
+- Hedef DB karakter seti AL32UTF8 önerilir. Tek baytlı Türkçe set (WE8ISO8859P9) de çalışır; Oracle sürücüsünün bunun için istediği `orai18n` jar'ın içindedir (0.2.1). Kapalı ağdaki ilk deneme (2026-11-10): test DB WE8ISO8859P9, Oracle 12.2.
+- Okuma her legacy tabloyu ROWID sırasıyla **tek imleçle** okur (0.2.1). 0.2.0'daki sayfa sayfa keyset sorgusu her sayfada tablonun kalanını tarayıp sıralıyordu; 404 bin satırlık R_DEMIRBAS'ta saatler sürüyordu.
+- Çalışma Ctrl+C ya da oturum kopmasıyla kesilirse Spring Batch kaydı "STARTED" kalır. `GocCalistirici` başlangıçta bunu FAILED işaretler (`JobOperator.recover`), böylece aynı mod ve etiketle devam edilir. Varsayım: aynı hedefe aynı anda tek süreç çalışır.
 - Legacy tablolar migration süresince taşınmamalı (`ALTER TABLE MOVE`, export/import yok). Satır kimliği ROWID'dir; tablo taşınırsa değişir (K4).
 
 ```bash
@@ -103,10 +102,16 @@ mvn -pl depo-migration -am package
 ```
 
 ```bash
-java -jar depo-migration/target/depo-migration-0.1.0-SNAPSHOT.jar --migration.mod=KURU --migration.etiket=kuru-1
+java -jar depo-migration/target/depo-migration-0.2.2.jar --migration.mod=KURU --migration.etiket=kuru-1
 ```
 
 Ortam değişkenleri: `HEDEF_DB_URL`, `HEDEF_DB_KULLANICI`, `HEDEF_DB_SIFRE`, `LEGACY_DB_URL`, `LEGACY_DB_KULLANICI`, `LEGACY_DB_SIFRE`.
+
+Jar tek başına çalışır (Spring Boot fat jar, bağımlılıklar içinde): çalıştırmak için yalnızca **JDK 25** gerekir; Maven, internet ve Docker gerekmez.
+
+**Flyway yarıda kalırsa** (ör. hedefte CREATE TRIGGER yetkisi yoksa V1 676. satırdaki ilk trigger'da ORA-01031; uygulama yetkileri önceden kontrol etmez. Oracle'da DDL geri alınamaz; yarım nesneler ve başarısız bir `flyway_schema_history` satırı kalır, sonraki her çalışma "Validate failed" ile durur):
+- **Hedefte henüz veri yoksa** (ilk kurulum): sebebi giderin (ör. eksik GRANT), sonra DBA hedef kullanıcıyı `DROP USER <hedef> CASCADE` ile silip aynı yetkilerle yeniden oluştursun. Hedef şema zaten boş olmalıydı; veri kaybı yoktur.
+- **Hedefte veri varsa** (ör. sonradan eklenen V2/V3 yarıda kaldı): yalnızca o script'in oluşturduğu nesneler elle silinir, `flyway_schema_history`'deki başarısız satır (`"success" = 0`) silinir ve uygulama yeniden çalıştırılır. Domain tablolarına dokunulmaz.
 
 **Önerilen sıra:**
 1. **KURU** çalıştır ve `raporlar/goc-raporu-*.txt` dosyasını oku.

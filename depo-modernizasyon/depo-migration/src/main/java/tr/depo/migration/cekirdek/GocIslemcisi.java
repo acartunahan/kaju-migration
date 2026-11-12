@@ -1,8 +1,11 @@
 package tr.depo.migration.cekirdek;
 
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.batch.core.listener.StepExecutionListener;
+import org.springframework.batch.core.step.StepExecution;
 import org.springframework.batch.infrastructure.item.ItemProcessor;
 import tr.depo.domain.ortak.BaseEntity;
 import tr.depo.migration.cekirdek.SorunKaydi.Seviye;
@@ -17,21 +20,39 @@ import tr.depo.migration.legacy.LegacySatir;
  *   <li>{@link SatirReddedildi} ya da beklenmeyen bir hata satırı RED yapar; iş durmaz.</li>
  * </ul>
  */
-public class GocIslemcisi implements ItemProcessor<LegacySatir, IslenmisSatir> {
+public class GocIslemcisi implements ItemProcessor<LegacySatir, IslenmisSatir>, StepExecutionListener {
 
     private static final Logger log = LoggerFactory.getLogger(GocIslemcisi.class);
 
     private final TabloGocu<?> goc;
     private final GocServisleri servisler;
 
+    /** Adım başında yüklenen, bu modda zaten eşlenmiş satırların ROWID'leri. */
+    private Set<String> eslenmisler;
+
     public GocIslemcisi(TabloGocu<?> goc, GocServisleri servisler) {
         this.goc = goc;
         this.servisler = servisler;
     }
 
+    /**
+     * Her adım çalıştırmasının (ilk çalışma ya da restart) başında çağrılır. Bir adımda her legacy satırı
+     * bir kez okunduğu için adım içinde kümeyi güncellemeye gerek yoktur.
+     */
+    @Override
+    public void beforeStep(StepExecution adim) {
+        eslenmisler = servisler.depo().eslenmisRowidler(goc.kaynakTablo(), servisler.calisma().kuruBayragi());
+        if (!eslenmisler.isEmpty()) {
+            log.info("{}: önceki çalışmalarda eşlenmiş {} satır atlanacak", goc.kaynakTablo(), eslenmisler.size());
+        }
+    }
+
     @Override
     public IslenmisSatir process(LegacySatir satir) {
-        if (servisler.depo().eslemeVar(goc.kaynakTablo(), satir.rowid(), servisler.calisma().kuruBayragi())) {
+        if (eslenmisler == null) {
+            throw new IllegalStateException(goc.kaynakTablo() + " işlemcisi adım dinleyicisi olarak kaydedilmemiş");
+        }
+        if (eslenmisler.contains(satir.rowid())) {
             return null;
         }
         DonusumBaglami baglam = new DonusumBaglami(satir, servisler);

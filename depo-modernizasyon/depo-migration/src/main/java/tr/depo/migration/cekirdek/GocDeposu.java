@@ -3,11 +3,14 @@ package tr.depo.migration.cekirdek;
 import java.math.BigDecimal;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 import javax.sql.DataSource;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.jdbc.core.SqlParameterValue;
 import org.springframework.stereotype.Component;
 import tr.depo.migration.ayar.GocModu;
@@ -29,6 +32,7 @@ public class GocDeposu {
 
     public GocDeposu(DataSource hedefVeriKaynagi) {
         this.jdbc = new JdbcTemplate(hedefVeriKaynagi);
+        this.jdbc.setFetchSize(1000);
     }
 
     // ---------------------------------------------------------------- kayıt tipleri
@@ -52,11 +56,15 @@ public class GocDeposu {
 
     // ---------------------------------------------------------------- kimlik eşleme
 
-    public boolean eslemeVar(String kaynakTablo, String kaynakRowid, int kuru) {
-        Integer adet = jdbc.queryForObject(
-            "SELECT COUNT(*) FROM MIG_KIMLIK_ESLEME WHERE KAYNAK_TABLO = ? AND KAYNAK_ROWID = ? AND KURU = ?",
-            Integer.class, kaynakTablo, kaynakRowid, kuru);
-        return adet != null && adet > 0;
+    /**
+     * Bu tablonun bu modda daha önce eşlenmiş (aktarılmış ya da arşivlenmiş) satırlarının ROWID'leri.
+     * Adım başında bir kez okunur; satır başına sorgu yapılmaz.
+     */
+    public Set<String> eslenmisRowidler(String kaynakTablo, int kuru) {
+        Set<String> rowidler = new HashSet<>();
+        jdbc.query("SELECT KAYNAK_ROWID FROM MIG_KIMLIK_ESLEME WHERE KAYNAK_TABLO = ? AND KURU = ?",
+            (RowCallbackHandler) rs -> rowidler.add(rs.getString(1)), kaynakTablo, kuru);
+        return rowidler;
     }
 
     /** Legacy anahtarına (normalize) göre arama: 0 → Yok, 1 → Bulundu, 2+ → Belirsiz. */

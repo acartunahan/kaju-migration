@@ -75,7 +75,6 @@ migration:
     sifre: ${LEGACY_DB_SIFRE}
     sema: DEPO
     fetch-boyutu: 500
-    yazma-yetkisi-varsa: DURDUR   # DURDUR | UYAR
 
   # Legacy kod → hedef değer. Anahtarlar köşeli parantez içinde (Spring'in özel karakter
   # kuralı). Büyük/küçük harfe duyarlı. Sağdaki boşluklar silinmiş hali yazılır.
@@ -91,6 +90,7 @@ migration:
     demirbas-durumu:              # R_DEMIRBAS.DURUM
       "[1]": NORMAL
       "[2]": ARIZALI
+      "[3]": IADE                 # comment'te yok; Delphi kodunda 3 = İade (2026-11-12)
     ariza-islem-turu:             # R_ARIZA_LOG.TUR
       "[1]": ISLEM
       "[2]": BILGI

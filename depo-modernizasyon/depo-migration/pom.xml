@@ -7,7 +7,7 @@
     <parent>
         <groupId>tr.depo</groupId>
         <artifactId>depo-modernizasyon</artifactId>
-        <version>0.1.0</version>
+        <version>0.2.2</version>
     </parent>
 
     <artifactId>depo-migration</artifactId>
@@ -52,6 +52,13 @@
         <dependency>
             <groupId>com.oracle.database.jdbc</groupId>
             <artifactId>ojdbc11</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <!-- Oracle sürücüsünün AL32UTF8/UTF8/US7ASCII dışındaki karakter setleri (ör. WE8ISO8859P9) için
+             gerekli; yoksa ORA-17056 "Non-supported character set". Sürümü Spring Boot'un ojdbc BOM'u belirler. -->
+        <dependency>
+            <groupId>com.oracle.database.nls</groupId>
+            <artifactId>orai18n</artifactId>
             <scope>runtime</scope>
         </dependency>
 

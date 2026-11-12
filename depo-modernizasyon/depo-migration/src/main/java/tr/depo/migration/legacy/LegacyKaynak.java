@@ -2,6 +2,8 @@ package tr.depo.migration.legacy;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -18,6 +20,7 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Pattern;
 import org.springframework.beans.factory.DisposableBean;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import tr.depo.migration.ayar.GocAyarlari;
@@ -49,10 +52,12 @@ public class LegacyKaynak implements DisposableBean {
     private final HikariDataSource veriKaynagi;
     private final JdbcTemplate jdbc;
     private final String sema;
+    private final int fetchBoyutu;
 
     public LegacyKaynak(GocAyarlari ayarlar) {
         GocAyarlari.Legacy legacy = ayarlar.legacy();
         this.sema = dogrulanmisAd(legacy.sema());
+        this.fetchBoyutu = legacy.fetchBoyutu();
 
         HikariConfig yapilandirma = new HikariConfig();
         yapilandirma.setPoolName("legacy-salt-okunur");
@@ -61,7 +66,8 @@ public class LegacyKaynak implements DisposableBean {
         yapilandirma.setPassword(legacy.sifre());
         yapilandirma.setReadOnly(true);
         yapilandirma.setAutoCommit(true);
-        yapilandirma.setMaximumPoolSize(2);
+        // Okuma akışı bir bağlantıyı adım boyunca tutar; diğerleri kontrol ve rapor sorguları için.
+        yapilandirma.setMaximumPoolSize(3);
         yapilandirma.addDataSourceProperty("defaultRowPrefetch", String.valueOf(legacy.fetchBoyutu()));
         this.veriKaynagi = new HikariDataSource(yapilandirma);
 
@@ -74,17 +80,78 @@ public class LegacyKaynak implements DisposableBean {
     }
 
     /**
-     * ROWID sırasına göre keyset sayfalama. {@code sonRowid} null ise baştan okur.
-     * ROWID, PK'si olmayan tablolarda da her satırda bulunan tek tekil değerdir (K4).
-     * {@code FETCH FIRST} Oracle 12c+ ister; legacy'deki EDITIONABLE ifadesi 12c+ olduğunu gösteriyor.
+     * Tabloyu ROWID sırasıyla tek bir imleçle okur. {@code sonRowid} null ise baştan, değilse o ROWID'den
+     * sonrasından başlar. ROWID, PK'si olmayan tablolarda da her satırda bulunan tek tekil değerdir (K4).
+     *
+     * <p>Sorgu bir kez çalışır; sıralama bir kez yapılır ve satırlar {@code fetchBoyutu}'luk gruplarla akar.
+     * (0.2.0'daki sayfa sayfa "ROWID > x ORDER BY ROWID FETCH FIRST n" sorgusu her sayfada tablonun kalanını
+     * tarayıp sıralıyordu; büyük tablolarda süre satır sayısının karesiyle büyüyordu.)
+     *
+     * <p>Akış bir legacy bağlantısını kapatılana kadar tutar. Çağıran mutlaka {@link SatirAkisi#close()} çağırır.
      */
-    public List<LegacySatir> sayfaOku(String tablo, String sonRowid, int adet) {
+    public SatirAkisi akisAc(String tablo, String sonRowid) {
         String sql = "SELECT ROWIDTOCHAR(t.ROWID) AS " + ROWID_ETIKETI + ", t.* FROM " + nitelikliAd(tablo) + " t"
             + (sonRowid == null ? "" : " WHERE t.ROWID > CHARTOROWID(?)")
-            + " ORDER BY t.ROWID FETCH FIRST " + adet + " ROWS ONLY";
+            + " ORDER BY t.ROWID";
         selectKontrolu(sql);
-        Object[] parametreler = sonRowid == null ? new Object[0] : new Object[] {sonRowid};
-        return jdbc.query(sql, (rs, sira) -> satirOku(tablo, rs), parametreler);
+        Connection baglanti = null;
+        PreparedStatement ifade = null;
+        try {
+            baglanti = veriKaynagi.getConnection();
+            ifade = baglanti.prepareStatement(sql, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+            ifade.setFetchSize(fetchBoyutu);
+            if (sonRowid != null) {
+                ifade.setString(1, sonRowid);
+            }
+            return new SatirAkisi(tablo, baglanti, ifade, ifade.executeQuery());
+        } catch (SQLException e) {
+            sessizKapat(ifade);
+            sessizKapat(baglanti);
+            throw new DataAccessResourceFailureException(tablo + " okunamadı", e);
+        }
+    }
+
+    /** {@link #akisAc} ile açılan, ileri yönlü satır akışı. */
+    public static final class SatirAkisi implements AutoCloseable {
+
+        private final String tablo;
+        private final Connection baglanti;
+        private final PreparedStatement ifade;
+        private final ResultSet sonuc;
+
+        private SatirAkisi(String tablo, Connection baglanti, PreparedStatement ifade, ResultSet sonuc) {
+            this.tablo = tablo;
+            this.baglanti = baglanti;
+            this.ifade = ifade;
+            this.sonuc = sonuc;
+        }
+
+        /** Sıradaki satır; tablo bittiyse null. */
+        public LegacySatir sonraki() {
+            try {
+                return sonuc.next() ? satirOku(tablo, sonuc) : null;
+            } catch (SQLException e) {
+                throw new DataAccessResourceFailureException(tablo + " okunurken hata", e);
+            }
+        }
+
+        @Override
+        public void close() {
+            sessizKapat(sonuc);
+            sessizKapat(ifade);
+            sessizKapat(baglanti);
+        }
+    }
+
+    private static void sessizKapat(AutoCloseable kaynak) {
+        if (kaynak == null) {
+            return;
+        }
+        try {
+            kaynak.close();
+        } catch (Exception ignored) {
+            // Kapatma hatası okumanın sonucunu değiştirmez.
+        }
     }
 
     public long satirSayisi(String tablo) {
@@ -118,25 +185,6 @@ public class LegacyKaynak implements DisposableBean {
         return jdbc.queryForList(sql, String.class, sema);
     }
 
-    /** Oturumda bulunan ve herhangi bir tabloya yazmayı mümkün kılan sistem yetkileri. */
-    public List<String> genisYazmaYetkileri() {
-        String sql = "SELECT PRIVILEGE FROM SESSION_PRIVS WHERE PRIVILEGE IN ("
-            + "'INSERT ANY TABLE', 'UPDATE ANY TABLE', 'DELETE ANY TABLE', 'ALTER ANY TABLE', "
-            + "'DROP ANY TABLE', 'CREATE ANY TRIGGER', 'EXECUTE ANY PROCEDURE')";
-        selectKontrolu(sql);
-        return jdbc.queryForList(sql, String.class);
-    }
-
-    /** Legacy şemadaki nesneler üzerinde doğrudan ya da rol ile verilmiş yazma yetkisi sayısı. */
-    public long nesneYazmaYetkisiSayisi() {
-        String sql = "SELECT (SELECT COUNT(*) FROM USER_TAB_PRIVS WHERE OWNER = ? "
-            + "AND PRIVILEGE IN ('INSERT', 'UPDATE', 'DELETE', 'ALTER', 'EXECUTE')) "
-            + "+ (SELECT COUNT(*) FROM ROLE_TAB_PRIVS WHERE OWNER = ? "
-            + "AND PRIVILEGE IN ('INSERT', 'UPDATE', 'DELETE', 'ALTER', 'EXECUTE')) FROM DUAL";
-        selectKontrolu(sql);
-        Long sayi = jdbc.queryForObject(sql, Long.class, sema, sema);
-        return sayi == null ? 0L : sayi;
-    }
 
     @Override
     public void destroy() {

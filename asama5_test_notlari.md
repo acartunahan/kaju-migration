@@ -83,7 +83,7 @@ Derleme ve yerel doğrulama sırasında bulundu:
 6. **Aynı etiketle tekrar:** `JobInstanceAlreadyCompleteException`.
 7. **Legacy hiç değişmedi:** Her legacy tablonun satır sayısı ve `MAX(ORA_ROWSCN)` değeri, testin başındakiyle aynı. ORA_ROWSCN, bloğa yapılan herhangi bir DML'de değişir.
 8. **Okuyucu restart:** ExecutionContext'ten devam eder. Sayfa sınırında, tamponda kalan satır da kaybolmaz.
-9. **Yetki:** Şema sahibiyle (DEPO) açılan legacy bağlantısında migration başlamaz.
+9. **Yetki kontrolü yok:** Şema sahibiyle (DEPO) açılan legacy bağlantısı da kabul edilir (kullanıcı kararı 2026-11-08).
 
 ## 4. Alan mutabakatı (canlıda da kullanılır)
 
@@ -100,6 +100,8 @@ Derleme ve yerel doğrulama sırasında bulundu:
 **Sonuç:**
 - Çıktı yalnızca kontrol adı ve hatalı satır sayısıdır, ham kayıt içermez.
 - Satır seviyesi mutabakat (kaynak = aktarılan + açık red) zaten her çalışmanın raporunda.
+
+**SQL*Plus ile çalıştırılacaksa** önce `SET SQLBLANKLINES ON` verilmeli: sorgu içinde boş satırlar var ve SQL*Plus varsayılan olarak boş satırda sorguyu keser (`SP2-0734`). DBeaver'da gerekmez. (2026-11-08 yerel kontrol: 95 kontrol / 0 hatalı.)
 
 ## 5. Testleri çalıştırma
 
@@ -127,6 +129,19 @@ Birincisi sadece birim testlerini çalıştırır. İkincisi uçtan uca testi de
 - İlk açılışta Oracle konteyneri birkaç dakika sürebilir.
 
 ### Yerel geliştirme ortamı (ev bilgisayarı)
+
+**Hız ölçümü (2026-11-10, 0.2.0 ve 0.2.1):** Kapalı ağdaki ilk KURU'da R_DEMIRBAS (404 bin satır, 152 MB) yaklaşık
+6 bin satır/dk ilerliyordu. Yerelde 200 bin satırlık kopya (80 MB; mock satırlar çoğaltılıp GUID'ler tekilleştirildi):
+KURU R_DEMIRBAS adımı 0.2.0'da 2 dk 17 sn, 0.2.1'de 33 sn (toplam 2 dk 29 sn → 46 sn); iki raporun içeriği aynı.
+0.2.1 GERCEK R_DEMIRBAS adımı 3 dk 28 sn; burada süreyi yazma (entity + ham veri + eşleme) belirliyor. Yerel ölçümde
+ağ gecikmesi yok; kapalı ağda 0.2.0'ın satır başına sorgusu ve sayfa başına tablo taraması daha pahalıydı.
+
+**Son yerel doğrulama (2026-11-08, 0.2.0, 20 tablo, mock veri):** KURU 13 sn, GERCEK 12 sn, aynı veriyle ikinci GERCEK
+(yeni etiket) 9 sn. Mutabakat tüm tablolarda TAMAM; alan mutabakatı 95 kontrol / 0 hatalı; `ZIMMET_GECMISI` = 239
+başlangıç kaydı (zimmetli sicili dolu 239 demirbaşın her biri için bir; çift kayıt 0, demirbaşla uyumsuz sicil 0);
+ikinci GERCEK yeni kayıt yazmadı; 20 silme yasağı trigger'ı etkin. **Not:** `CREATE TRIGGER` yetkisi kurulum
+script'ine sonradan eklendiği için eski bir `yerel-db` volume'ünde HEDEF'te bu yetki yoktur; ya `GRANT CREATE TRIGGER
+TO HEDEF` elle verilir ya da volume `down -v` ile sıfırdan kurulur.
 
 | Araç | Nerede | Not |
 |---|---|---|
@@ -170,6 +185,9 @@ Kontroller gerçek jar'lara karşı yapıldı. Sürümler: Boot 4.0.9, Spring Ba
 
 1. [ ] Uçtan uca test yeşil (`.\testleri-calistir.ps1`, Docker ile). Birim testleri ve derleme evde yeşil.
 2. [ ] DBA: legacy'de salt okunur `DEPO_OKUYUCU` kullanıcısı açıldı (Aşama 4 notları, 4. bölüm). Hedef şema boş, AL32UTF8.
+   Hedef kullanıcıda `CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE TRIGGER` ve varsayılan tablespace'te kota
+   var. Uygulama yetkileri kontrol etmez (kullanıcı kararı); eksikse V1 yarıda kalır (bkz. Aşama 4 notları, "Flyway
+   yarıda kalırsa").
 3. [ ] KURU çalıştırıldı. Raporda:
    - Tanınmayan kodlar yml'ye eklendi.
    - Kapsam dışı tablolar (`R_IADE_ONAY_HAVUZU` vb.) gözden geçirildi.

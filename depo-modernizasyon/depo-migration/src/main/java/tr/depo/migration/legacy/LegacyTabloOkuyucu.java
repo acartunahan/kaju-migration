@@ -1,20 +1,17 @@
 package tr.depo.migration.legacy;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.List;
 import org.springframework.batch.infrastructure.item.ExecutionContext;
 import org.springframework.batch.infrastructure.item.ItemStreamReader;
 
 /**
- * Bir legacy tabloyu ROWID sırasıyla, sayfa sayfa okuyan, restart edilebilir reader.
+ * Bir legacy tabloyu ROWID sırasıyla tek bir imleçle okuyan, restart edilebilir reader.
  *
  * <p>Restart durumu, ExecutionContext'e yazılan "son teslim edilen ROWID"dir. Spring Batch
  * {@link #update} metodunu chunk commit'inden sonra çağırır. O anda kaydedilen değer, commit
  * edilmiş son satırın ROWID'idir. Restart'ta okuma bu ROWID'den sonrasından devam eder.
- * Tampondaki henüz teslim edilmemiş satırlar kaydedilmez; restart'ta tekrar okunur.
  *
- * <p>Legacy veriye yalnızca {@link LegacyKaynak#sayfaOku} ile, yani SELECT ile erişir.
+ * <p>İmleç {@link #open} ile açılır, {@link #close} ile kapanır (adım hata verse de Spring Batch close'u
+ * çağırır). Legacy veriye yalnızca {@link LegacyKaynak#akisAc} ile, yani SELECT ile erişir.
  */
 public class LegacyTabloOkuyucu implements ItemStreamReader<LegacySatir> {
 
@@ -22,43 +19,39 @@ public class LegacyTabloOkuyucu implements ItemStreamReader<LegacySatir> {
 
     private final LegacyKaynak kaynak;
     private final String tablo;
-    private final int sayfaBoyutu;
 
-    private final Deque<LegacySatir> tampon = new ArrayDeque<>();
+    private LegacyKaynak.SatirAkisi akis;
     private String sonTeslimEdilenRowid;
-    private String sonCekilenRowid;
     private boolean tabloBitti;
 
-    public LegacyTabloOkuyucu(LegacyKaynak kaynak, String tablo, int sayfaBoyutu) {
+    public LegacyTabloOkuyucu(LegacyKaynak kaynak, String tablo) {
         this.kaynak = kaynak;
         this.tablo = tablo;
-        this.sayfaBoyutu = sayfaBoyutu;
     }
 
     @Override
     public void open(ExecutionContext baglam) {
+        close();
         sonTeslimEdilenRowid = baglam.containsKey(DURUM_ANAHTARI) ? baglam.getString(DURUM_ANAHTARI) : null;
-        sonCekilenRowid = sonTeslimEdilenRowid;
-        tampon.clear();
         tabloBitti = false;
+        akis = kaynak.akisAc(tablo, sonTeslimEdilenRowid);
     }
 
     @Override
     public LegacySatir read() {
-        if (tampon.isEmpty() && !tabloBitti) {
-            List<LegacySatir> sayfa = kaynak.sayfaOku(tablo, sonCekilenRowid, sayfaBoyutu);
-            if (sayfa.size() < sayfaBoyutu) {
-                tabloBitti = true;
-            }
-            if (!sayfa.isEmpty()) {
-                sonCekilenRowid = sayfa.getLast().rowid();
-                tampon.addAll(sayfa);
-            }
+        if (tabloBitti) {
+            return null;
         }
-        LegacySatir satir = tampon.poll();
-        if (satir != null) {
-            sonTeslimEdilenRowid = satir.rowid();
+        if (akis == null) {
+            throw new IllegalStateException(tablo + " okuyucusu açılmadan okunamaz");
         }
+        LegacySatir satir = akis.sonraki();
+        if (satir == null) {
+            tabloBitti = true;
+            close();
+            return null;
+        }
+        sonTeslimEdilenRowid = satir.rowid();
         return satir;
     }
 
@@ -71,6 +64,9 @@ public class LegacyTabloOkuyucu implements ItemStreamReader<LegacySatir> {
 
     @Override
     public void close() {
-        tampon.clear();
+        if (akis != null) {
+            akis.close();
+            akis = null;
+        }
     }
 }
